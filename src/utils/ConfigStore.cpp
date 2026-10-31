@@ -4,11 +4,11 @@
         \__ \ |_) | | |  __/ | | \__ \ \__ \ 
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
-                © Copyright 2025 
-            ✈ `https://github.com/sprensis` 
+                © Copyright 2025-2026 
+            ✈ `https://github.com/highstat` 
     Name: ConfigStore 
     Description: Persistent configuration for BW16 repeater 
-    Author: @sprensis 
+    Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */
@@ -16,11 +16,11 @@
 #include "ConfigStore.h"
 #include <string.h>
 
-static const uint32_t MAGIC = 0xB8162025;
+static const uint32_t MAGIC = 0xB8162026;
 
 void ConfigStore::begin() {
   memset(&cfg, 0, sizeof(cfg));
-  cfg.mode = RepeaterMode::NAT;
+  cfg.mode = RepeaterMode::BRIDGE;
   cfg.prefer5g = true;
   strcpy(cfg.apSsid, "BW16-Repeater");
   strcpy(cfg.apPass, "bw16pass");
@@ -35,6 +35,9 @@ void ConfigStore::begin() {
   cfg.staIP = 0;
   cfg.staMask = 0;
   cfg.staGateway = 0;
+  cfg.txPowerBoost = true;
+  cfg.rssiKickEnabled = true;
+  cfg.rssiKickThreshold = -76;
 }
 
 void ConfigStore::load() {

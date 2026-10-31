@@ -7,7 +7,7 @@
                 © Copyright 2025-2026 
             ✈ `https://github.com/highstat` 
     Name: WebUI 
-    Description: Embedded web UI with auth and Wi-Fi configuration portal
+    Description: Commercial-grade Extender WiFi Settings portal & Dashboard
     Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
@@ -31,6 +31,7 @@ class WebUI {
   void loop();
  private:
   void handleClient(WiFiClient& c);
+  void serveMainPage(WiFiClient& c);
   bool authOk(const String& h);
   WiFiServer server{80};
   ConfigStore* store = nullptr;

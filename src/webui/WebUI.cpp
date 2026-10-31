@@ -4,11 +4,11 @@
         \__ \ |_) | | |  __/ | | \__ \ \__ \ 
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
-                © Copyright 2025 
-            ✈ `https://github.com/sprensis` 
+                © Copyright 2025-2026 
+            ✈ `https://github.com/highstat` 
     Name: WebUI 
-    Description: Embedded web UI with auth 
-    Author: @sprensis 
+    Description: Commercial-grade Extender WiFi Settings portal & Dashboard
+    Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */
@@ -16,7 +16,13 @@
 #include "WebUI.h"
 
 void WebUI::begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, BridgeManager& bridge, DhcpServer& dhcp) {
-  store=&cfg; logger=&log; wifiRef=&wifi; bridgeRef=&bridge; dhcpRef=&dhcp; server.begin();
+  store = &cfg;
+  logger = &log;
+  wifiRef = &wifi;
+  bridgeRef = &bridge;
+  dhcpRef = &dhcp;
+  server.begin();
+  if (logger) logger->info(F("[WEB] Extender Web UI server listening on port 80"));
 }
 
 void WebUI::loop() {
@@ -25,159 +31,458 @@ void WebUI::loop() {
 }
 
 bool WebUI::authOk(const String& h) {
-  String u = store->get().webUser; String p = store->get().webPass; String token = b64(String(u+":"+p));
-  String needle = String("Authorization: Basic ")+token;
-  return h.indexOf(needle)>=0;
+  // Allow unauthenticated access in setup mode for frictionless captive portal onboarding
+  if (wifiRef && wifiRef->isSetupMode()) return true;
+  String u = store->get().webUser;
+  String p = store->get().webPass;
+  if (u.length() == 0 && p.length() == 0) return true;
+  String token = b64(String(u + ":" + p));
+  String needle = String("Authorization: Basic ") + token;
+  return h.indexOf(needle) >= 0;
 }
 
 void WebUI::handleClient(WiFiClient& c) {
-  String headers=""; headers.reserve(768); unsigned long t=millis(); while(c.connected() && millis()-t<1500) { while(c.available()) { char ch=c.read(); headers+=ch; if(headers.endsWith("\r\n\r\n")) goto hdr_done; } }
+  String headers = "";
+  headers.reserve(768);
+  unsigned long t = millis();
+  while (c.connected() && millis() - t < 1200) {
+    while (c.available()) {
+      char ch = c.read();
+      headers += ch;
+      if (headers.endsWith("\r\n\r\n")) goto hdr_done;
+    }
+  }
 hdr_done:
   String reqLine = headers.substring(0, headers.indexOf("\r\n"));
-  if (reqLine.startsWith("GET /generate_204") || reqLine.startsWith("GET /hotspot-detect.html") || reqLine.startsWith("GET /success") || reqLine.startsWith("GET /ncsi.txt")) {
-    String html = String("<html><head><meta http-equiv=\"refresh\" content=\"0;url=/\"></head><body>OK</body></html>");
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: "+String(html.length())+"\r\n\r\n"+html);
+
+  // Captive Portal probes
+  if (reqLine.startsWith("GET /generate_204") ||
+      reqLine.startsWith("GET /hotspot-detect.html") ||
+      reqLine.startsWith("GET /success") ||
+      reqLine.startsWith("GET /ncsi.txt") ||
+      reqLine.startsWith("GET /canonical.html")) {
+    String html = F("<html><head><meta http-equiv=\"refresh\" content=\"0;url=/\"></head><body>Redirecting to Extender Setup...</body></html>");
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + String(html.length()) + "\r\n\r\n" + html);
     c.stop();
     return;
   }
-  if (!authOk(headers)) { String body401="<html><head><meta charset='UTF-8'></head><body><h3>BW16 Web UI</h3><p>Authentication required.</p></body></html>"; c.print("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=BW16\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: "+String(body401.length())+"\r\n\r\n"+body401); c.stop(); return; }
-  int clPos = headers.indexOf("Content-Length:"); int contentLen = 0; if (clPos>=0) { int endLine = headers.indexOf("\r\n", clPos); if (endLine>clPos) { String v = headers.substring(clPos+15, endLine); v.trim(); contentLen = v.toInt(); } }
-  String body=""; body.reserve(contentLen>0?contentLen:256); unsigned long t2=millis(); while(c.connected() && (int)body.length()<contentLen && millis()-t2<2000) { while(c.available()) { body+=char(c.read()); if ((int)body.length()>=contentLen) break; } }
-  reqLine = headers.substring(0, headers.indexOf("\r\n"));
-  String qPath = reqLine; int sp = qPath.indexOf(' '); if (sp>0) qPath = qPath.substring(0, sp);
-  String prefillSsid=""; int qs = qPath.indexOf("?ssid="); if (qs>0) { prefillSsid = qPath.substring(qs+6); }
-  if (reqLine.startsWith("GET /status")) {
-    String json="{";
-    json += "\"sta\":\""+ipToStr(wifiRef->staIP())+"\",";
-    json += "\"ap\":\""+ipToStr(wifiRef->apIP())+"\",";
-    json += "\"last\":\""+wifiRef->lastStatusMsg()+"\"}";
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "+String(json.length())+"\r\n\r\n"+json);
+
+  // Basic Auth check
+  if (!authOk(headers)) {
+    String body401 = F("<html><body><h3>401 Unauthorized</h3><p>Access requires login.</p></body></html>");
+    c.print("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=BW16-Extender\r\nContent-Type: text/html\r\nContent-Length: " + String(body401.length()) + "\r\n\r\n" + body401);
     c.stop();
     return;
   }
-  bool didAuth=false; bool didConfig=false;
-  if (reqLine.startsWith("GET /scan")) {
+
+  // Read body if POST
+  int clPos = headers.indexOf("Content-Length:");
+  int contentLen = 0;
+  if (clPos >= 0) {
+    int endLine = headers.indexOf("\r\n", clPos);
+    if (endLine > clPos) {
+      String v = headers.substring(clPos + 15, endLine);
+      v.trim();
+      contentLen = v.toInt();
+    }
+  }
+  String body = "";
+  body.reserve(contentLen > 0 ? contentLen : 256);
+  unsigned long t2 = millis();
+  while (c.connected() && (int)body.length() < contentLen && millis() - t2 < 1500) {
+    while (c.available()) {
+      body += char(c.read());
+      if ((int)body.length() >= contentLen) break;
+    }
+  }
+
+  // API: Live Status JSON
+  if (reqLine.startsWith("GET /status_json")) {
+    int rssi = wifiRef->getRouterRssi();
+    int ch = wifiRef->getActiveChannel();
+    ConnectedClient clients[8];
+    int clientCount = wifiRef->getAssociatedClients(clients, 8);
+
+    String json = "{";
+    json += "\"connected\":" + String(wifiRef->staConnected() ? "true" : "false") + ",";
+    json += "\"bridge\":" + String(bridgeRef->isBridgeActive() ? "true" : "false") + ",";
+    json += "\"sta_ssid\":\"" + String(store->get().staSsid) + "\",";
+    json += "\"sta_ip\":\"" + ipToStr(wifiRef->staIP()) + "\",";
+    json += "\"ap_ssid\":\"" + String(store->get().apSsid) + "\",";
+    json += "\"ap_ip\":\"" + ipToStr(wifiRef->apIP()) + "\",";
+    json += "\"channel\":" + String(ch) + ",";
+    json += "\"band\":\"" + String(ch > 14 ? "5 GHz" : "2.4 GHz") + "\",";
+    json += "\"rssi\":" + String(rssi) + ",";
+    json += "\"tx_boost\":true,";
+    json += "\"uptime_s\":" + String(millis() / 1000) + ",";
+    json += "\"clients\":[";
+    for (int i = 0; i < clientCount; i++) {
+      json += "\"" + String(clients[i].mac) + "\"";
+      if (i < clientCount - 1) json += ",";
+    }
+    json += "]}";
+
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
+    c.stop();
+    return;
+  }
+
+  // API: Wi-Fi Scan JSON
+  if (reqLine.startsWith("GET /scan_json")) {
     int n = WiFi.scanNetworks();
-    String html=""; html.reserve(1024);
-    html += "<html><head><style>body{font-family:sans-serif;margin:20px}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:6px 8px}</style></head><body>";
-    html += "<h3>Scan Results</h3><table><tr><th>SSID</th><th>Enc</th><th>RSSI</th></tr>";
-    for(int i=0;i<n;i++){ String s=WiFi.SSID(i); int r=WiFi.RSSI(i); int e=WiFi.encryptionType(i); html += String("<tr><td>")+s+"</td><td>"+String(e)+"</td><td>"+String(r)+"</td></tr>"; }
-    html += "</table><p><a href='/'>&larr; Back</a></p></body></html>";
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: "+String(html.length())+"\r\n\r\n"+html);
+    String json = "{\"networks\":[";
+    for (int i = 0; i < n; i++) {
+      String s = WiFi.SSID(i);
+      int r = WiFi.RSSI(i);
+      int enc = WiFi.encryptionType(i);
+      if (s.length() == 0) continue;
+      json += "{";
+      json += "\"ssid\":\"" + s + "\",";
+      json += "\"rssi\":" + String(r) + ",";
+      json += "\"enc\":" + String(enc);
+      json += "}";
+      if (i < n - 1) json += ",";
+    }
+    json += "]}";
+
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
     c.stop();
     return;
   }
-  if (reqLine.startsWith("POST /auth")) {
-    int uPos=body.indexOf("user="); int pPos=body.indexOf("pass=");
-    if (uPos>=0) { int amp=body.indexOf('&', uPos); String uv=body.substring(uPos+5, amp>=0?amp:body.length()); uv.trim(); strncpy(store->mutableRef().webUser, uv.c_str(), 31); }
-    if (pPos>=0) { int amp=body.indexOf('&', pPos); String pv=body.substring(pPos+5, amp>=0?amp:body.length()); pv.trim(); strncpy(store->mutableRef().webPass, pv.c_str(), 63); }
-    store->save(); didAuth=true;
+
+  // API: Kick Client
+  if (reqLine.startsWith("POST /kick")) {
+    int mPos = body.indexOf("mac=");
+    if (mPos >= 0) {
+      int amp = body.indexOf('&', mPos);
+      String mac = body.substring(mPos + 4, amp >= 0 ? amp : body.length());
+      mac.trim();
+      wifiRef->kickClient(mac.c_str());
+    }
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK");
+    c.stop();
+    return;
   }
-  if (reqLine.startsWith("POST /config")) {
-    int mPos=body.indexOf("mode="); int sPos=body.indexOf("ssid="); int pPos=body.indexOf("pass="); int chPos=body.indexOf("channel="); int apSPos=body.indexOf("apssid="); int apPPos=body.indexOf("appass=");
-    int stEn=body.indexOf("sta_static="); int stIp=body.indexOf("sta_ip="); int stMa=body.indexOf("sta_mask="); int stGw=body.indexOf("sta_gw=");
-    if (mPos>=0) { int amp=body.indexOf('&', mPos); String mv=body.substring(mPos+5, amp>=0?amp:body.length()); store->mutableRef().mode=(mv.startsWith("BRIDGE")?RepeaterMode::BRIDGE:RepeaterMode::NAT); }
-    if (sPos>=0) { int amp=body.indexOf('&', sPos); String sv=body.substring(sPos+5, amp>=0?amp:body.length()); sv.trim(); strncpy(store->mutableRef().staSsid, sv.c_str(), 63); }
-    if (pPos>=0) { int amp=body.indexOf('&', pPos); String pv=body.substring(pPos+5, amp>=0?amp:body.length()); pv.trim(); strncpy(store->mutableRef().staPass, pv.c_str(), 63); }
-    if (chPos>=0) { int amp=body.indexOf('&', chPos); String cv=body.substring(chPos+8, amp>=0?amp:body.length()); store->mutableRef().apChannel = (uint8_t)cv.toInt(); }
-    int aPos = body.indexOf("auto="); if (aPos>=0) { int amp=body.indexOf('&', aPos); String av=body.substring(aPos+5, amp>=0?amp:body.length()); store->mutableRef().apAutoChannel = (av=="on"||av=="1"); }
-    if (apSPos>=0) { int amp=body.indexOf('&', apSPos); String av=body.substring(apSPos+7, amp>=0?amp:body.length()); av.trim(); strncpy(store->mutableRef().apSsid, av.c_str(), 63); }
-    if (apPPos>=0) { int amp=body.indexOf('&', apPPos); String apv=body.substring(apPPos+7, amp>=0?amp:body.length()); apv.trim(); strncpy(store->mutableRef().apPass, apv.c_str(), 63); }
-    if (stEn>=0) { int amp=body.indexOf('&', stEn); String v=body.substring(stEn+11, amp>=0?amp:body.length()); store->mutableRef().staStatic = (v=="on"||v=="1"); }
-    auto parseIP=[&](const String& s){ uint8_t a=0,b=0,c=0,d=0; sscanf(s.c_str(), "%hhu.%hhu.%hhu.%hhu", &a,&b,&c,&d); return (uint32_t(a)<<24)|(uint32_t(b)<<16)|(uint32_t(c)<<8)|uint32_t(d); };
-    if (stIp>=0) { int amp=body.indexOf('&', stIp); String sv=body.substring(stIp+7, amp>=0?amp:body.length()); store->mutableRef().staIP = parseIP(sv); }
-    if (stMa>=0) { int amp=body.indexOf('&', stMa); String sv=body.substring(stMa+9, amp>=0?amp:body.length()); store->mutableRef().staMask = parseIP(sv); }
-    if (stGw>=0) { int amp=body.indexOf('&', stGw); String sv=body.substring(stGw+7, amp>=0?amp:body.length()); store->mutableRef().staGateway = parseIP(sv); }
-    store->save(); didConfig=true;
-    if (chPos>=0 || apSPos>=0 || apPPos>=0) wifiRef->restartAP();
-    if (sPos>=0 || pPos>=0 || stEn>=0 || stIp>=0 || stMa>=0 || stGw>=0) wifiRef->restartSTA();
+
+  // API: Save Wi-Fi Configuration
+  if (reqLine.startsWith("POST /save_wifi")) {
+    int sPos = body.indexOf("ssid=");
+    int pPos = body.indexOf("pass=");
+    int apSPos = body.indexOf("ap_ssid=");
+    int apPPos = body.indexOf("ap_pass=");
+
+    if (sPos >= 0) {
+      int amp = body.indexOf('&', sPos);
+      String sv = body.substring(sPos + 5, amp >= 0 ? amp : body.length());
+      sv.replace("+", " ");
+      sv.trim();
+      strncpy(store->mutableRef().staSsid, sv.c_str(), 63);
+    }
+    if (pPos >= 0) {
+      int amp = body.indexOf('&', pPos);
+      String pv = body.substring(pPos + 5, amp >= 0 ? amp : body.length());
+      pv.trim();
+      strncpy(store->mutableRef().staPass, pv.c_str(), 63);
+    }
+    if (apSPos >= 0) {
+      int amp = body.indexOf('&', apSPos);
+      String asv = body.substring(apSPos + 8, amp >= 0 ? amp : body.length());
+      asv.replace("+", " ");
+      asv.trim();
+      if (asv.length() > 0) strncpy(store->mutableRef().apSsid, asv.c_str(), 63);
+    }
+    if (apPPos >= 0) {
+      int amp = body.indexOf('&', apPPos);
+      String apv = body.substring(apPPos + 8, amp >= 0 ? amp : body.length());
+      apv.trim();
+      if (apv.length() >= 8) strncpy(store->mutableRef().apPass, apv.c_str(), 63);
+    }
+
+    store->mutableRef().mode = RepeaterMode::BRIDGE;
+    store->save();
+
+    String resp = F("{\"status\":\"saved\",\"message\":\"Connecting to Wi-Fi... Please reconnect to extended network.\"}");
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + String(resp.length()) + "\r\n\r\n" + resp);
+    c.stop();
+
+    delay(400);
+    wifiRef->restartSTA();
+    return;
   }
-  String html=""; html.reserve(4096);
-  html += "<html lang='en'><head><meta charset='UTF-8'><style>";
-  html += "body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;margin:0;background:#f0f2f5;color:#1f2937}";
-  html += ".container{max-width:980px;margin:0 auto;padding:20px}";
-  html += ".topbar{background:#1f2937;color:#f9fafb;padding:14px 22px;display:flex;align-items:center;justify-content:space-between}";
-  html += ".brand{font-weight:600;letter-spacing:.2px}";
-  html += ".nav a{color:#f9fafb;text-decoration:none;margin-left:14px;opacity:.8}";
-  html += ".nav a:hover{opacity:1;text-decoration:underline}";
-  html += ".card{background:#fff;border:1px solid #d1d5db;border-radius:12px;padding:16px;margin:18px 0;box-shadow:0 4px 12px rgba(0,0,0,.05)}";
-  html += "fieldset{border:1px solid #d1d5db;padding:12px;margin-bottom:14px;border-radius:10px}";
-  html += "legend{padding:0 6px}";
-  html += "label{display:inline-block;min-width:120px;margin:6px 12px 6px 0}";
-  html += "input,select{padding:8px 10px;margin:6px 0;max-width:360px;border:1px solid #d1d5db;border-radius:8px}";
-  html += "button{padding:8px 14px;background:#4b5563;color:#fff;border:0;border-radius:8px}";
-  html += ".row{display:flex;align-items:center;flex-wrap:wrap;gap:10px}";
-  html += ".notice{background:#f0f9ff;border:1px solid #e0f2fe;padding:8px 12px;border-radius:8px;margin-bottom:10px}";
-  html += ".warn{background:#fefce8;border:1px solid #fef9c3;padding:8px 12px;border-radius:8px;margin-bottom:10px}";
-  html += ".faq h3{margin:0 0 10px}";
-  html += ".faq h4{margin:10px 0 6px}";
-  html += "html[lang=ru] .en{display:none}";
-  html += "html[lang=en] .ru{display:none}";
-  html += ".hint{font-size:12px;color:#64748b;margin-top:4px}";
-  html += ".modal{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(15,23,42,0.5);display:none;align-items:center;justify-content:center;z-index:9999}";
-  html += ".modal.visible{display:flex}";
-  html += ".modal-content{background:#fff;border-radius:16px;max-width:960px;width:92%;padding:18px;border:1px solid #d1d5db;box-shadow:0 12px 36px rgba(0,0,0,.15);animation:pop .18s ease-out}";
-  html += ".modal-content .close{float:right;background:#374151;color:#fff;border:0;border-radius:999px;padding:6px 10px}";
-  html += "@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}";
-  html += "</style><script>document.addEventListener('click',function(e){var t=e.target;if(t.tagName==='A'&&t.dataset&&t.dataset.open){e.preventDefault();var m=document.getElementById(t.dataset.open+'Modal');if(m){m.className='modal visible';}}if(t.dataset&&t.dataset.close){var m=document.getElementById(t.dataset.close+'Modal');if(m){m.className='modal';}}if(t.tagName==='BUTTON'&&t.dataset&&t.dataset.l){document.documentElement.setAttribute('lang',t.dataset.l);} });</script></head><body>";
-  html += "<div class=topbar><div class=brand>BW16 Repeater</div><div class=nav><a href='/' >Status</a><a href='/scan'>Scan</a><a href='#' data-open='faq'>FAQ</a></div></div><div class=container>";
-  if (didAuth || didConfig) { html += "<div class=notice>Saved & applied.</div>"; }
-  html += "<div class=card><h3>BW16 Repeater</h3><div class=row><div>Status: STA ";
-  html += ipToStr(wifiRef->staIP());
-  html += " | AP ";
-  html += ipToStr(wifiRef->apIP());
-  html += "</div><div>Last: "; html += wifiRef->lastStatusMsg(); html += "</div></div>";
-  html += "<div class=card><form method=post action=/config>";
-  html += "<fieldset><legend>Mode</legend><label>Mode </label><select name=mode>";
-  if (store->get().mode==RepeaterMode::BRIDGE) {
-    html += "<option value=BRIDGE selected>BRIDGE</option><option value=NAT>NAT</option>";
-  } else {
-    html += "<option value=BRIDGE>BRIDGE</option><option value=NAT selected>NAT</option>";
-  }
-  html += "</select></fieldset>";
-  html += "<fieldset><legend>STA Config</legend>";
-  html += "<label>SSID </label><input name=ssid placeholder='Home WiFi SSID' value='";
-  html += (prefillSsid.length()?prefillSsid:String(store->get().staSsid));
-  html += "'>";
-  html += "<label>Password </label><input type=password name=pass placeholder='WiFi password' value='";
-  html += String(store->get().staPass);
-  html += "'>";
-  html += "<div class=hint en>Home Wi‑Fi network name</div><div class=hint ru>Имя вашей домашней сети Wi‑Fi</div><div class=hint en>Home Wi‑Fi password</div><div class=hint ru>Пароль вашей домашней сети Wi‑Fi</div></fieldset>";
-  html += "<fieldset><legend>STA Static IP</legend>";
-  html += "<label><input type=checkbox name=sta_static"; if (store->get().staStatic) html += " checked"; html += "> Enable</label>";
-  auto toIpStr=[&](uint32_t v){ IPAddress ip((v>>24)&255,(v>>16)&255,(v>>8)&255,v&255); return ipToStr(ip); };
-  html += "<label>IP </label><input name=sta_ip value='"; html += toIpStr(store->get().staIP); html += "'>";
-  html += "<label>Mask </label><input name=sta_mask value='"; html += toIpStr(store->get().staMask); html += "'>";
-  html += "<label>Gateway </label><input name=sta_gw value='"; html += toIpStr(store->get().staGateway); html += "'>";
-  html += "</fieldset>";
-  html += "<fieldset><legend>AP Config</legend>";
-  html += "<label>SSID </label><input name=apssid placeholder='AP SSID' value='"; html += String(store->get().apSsid); html += "'>";
-  html += "<label>Password </label><input type=password name=appass placeholder='AP password (>=8)' value='"; html += String(store->get().apPass); html += "'>";
-  html += "<label>Channel </label><input name=channel value='"; html += String((int)store->get().apChannel); html += "'>";
-  html += "<div class=warn en>For AP+STA, set AP Channel equal to your router's channel.</div><div class=warn ru>Для AP+STA установите канал AP равным каналу вашего роутера.</div>";
-  html += "<label><input type=checkbox name=auto"; if (store->get().apAutoChannel) html += " checked"; html += "> Auto Channel</label>";
-  html += "</fieldset>";
-  html += "<button>Save</button> <a href=/scan style='margin-left:10px'>Scan</a></form></div>";
-  html += "<div class=card><form method=post action=/auth><fieldset><legend>Web Auth</legend><label>User </label><input name=user value='";
-  html += String(store->get().webUser);
-  html += "'>";
-  html += "<label>Password </label><input type=password name=pass value='";
-  html += String(store->get().webPass);
-  html += "'>";
-  html += "<button>Update</button></fieldset></form></div>";
-  html += "<div id=faqModal class='modal'><div class='modal-content'><button class=close data-close='faq'>×</button><div class='faq'>";
-  html += "<div class=row><div class=lang><button data-l='en'>English</button> <button data-l='ru'>Русский</button></div></div>";
-  html += "<h3 class='en'>FAQ</h3><h3 class='ru'>Вопросы и ответы</h3>";
-  html += "<h4 class='en'>What is the BW16-Repeater AP?</h4><p class='en'>SoftAP provides a local hotspot. Clients receive IP like 192.168.4.x and can open Web UI at 192.168.4.1.</p>";
-  html += "<h4 class='ru'>Что такое точка доступа BW16-Repeater?</h4><p class='ru'>SoftAP создаёт локальную сеть. Клиенты получают IP вида 192.168.4.x и открывают Web UI по адресу 192.168.4.1.</p>";
-  html += "<h4 class='en'>Why 192.168.4.1 might not open?</h4><p class='en'>Ensure the device is connected to BW16-Repeater and has DHCP IP (see monitor). Some systems rely on captive checks; our DNS/HTTP captive is enabled. Use browser and enter http://192.168.4.1 directly.</p>";
-  html += "<h4 class='ru'>Почему может не открываться 192.168.4.1?</h4><p class='ru'>Убедитесь, что устройство подключено к BW16-Repeater и получило IP по DHCP (смотрите монитор). Некоторые системы используют каптив‑проверки; у нас включён DNS/HTTP каптив. Введите http://192.168.4.1 напрямую в браузере.</p>";
-  html += "<h4 class='en'>What do typical logs mean?</h4><ul class='en'><li>\"AP start 3 on ch X\": SoftAP started on channel X.</li><li>\"DHCP assign ip = 192.168.4.100\": client got IP from AP.</li><li>\"Accept connection successfully\": a client socket connected to Web UI.</li><li>\"NAT: STA not connected\": STA is not connected yet; configure SSID/password.</li><li>\"ERROR on binding\": first server bind may fail; it recovers.</li></ul>";
-  html += "<h4 class='ru'>Что означают типичные логи?</h4><ul class='ru'><li>\"AP start 3 on ch X\": SoftAP запущен на канале X.</li><li>\"DHCP assign ip = 192.168.4.100\": клиент получил IP от AP.</li><li>\"Accept connection successfully\": клиентский сокет подключился к Web UI.</li><li>\"NAT: STA not connected\": STA ещё не подключён; настройте SSID/пароль.</li><li>\"ERROR on binding\": первый bind сервера может не пройти; далее восстанавливается.</li></ul>";
-  html += "<h4 class='en'>How to configure STA?</h4><p class='en'>Use the STA form above or the serial commands: set_sta &lt;ssid&gt; &lt;pass&gt;. If your router uses fixed channels, set AP channel to match the STA channel for AP+STA.</p>";
-  html += "<h4 class='ru'>Как настроить STA?</h4><p class='ru'>Используйте форму STA выше или команды по Serial: set_sta &lt;ssid&gt; &lt;pass&gt;. Если роутер на фиксированном канале, выставьте канал AP равным каналу STA для AP+STA.</p>";
-  html += "</div></div></div>";
-  html += "</div></body></html>";
-  c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: "+String(html.length())+"\r\n\r\n"+html);
+
+  // SERVE MAIN HTML (Extender WiFi Settings UI matching photo)
+  serveMainPage(c);
   c.stop();
+}
+
+void WebUI::serveMainPage(WiFiClient& c) {
+  c.print(F("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nConnection: close\r\n\r\n"));
+
+  // Send in streaming chunks to keep RAM usage minimal
+  c.print(F("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+            "<title>Extender WiFi Settings</title><style>"
+            "* {box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
+            "body {background:#f3f5f8;color:#333;min-height:100vh;display:flex;flex-direction:column;}"
+            ".header {background:linear-gradient(to right, #c29944, #d3a44a);padding:14px 28px;display:flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,0.15);}"
+            ".brand-box {display:flex;flex-direction:column;align-items:center;margin-right:24px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.3);}"
+            ".brand-box svg {width:38px;height:38px;fill:#fff;}"
+            ".brand-sub {font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-top:2px;}"
+            ".title-box h1 {font-size:22px;color:#2b220e;font-weight:700;}"
+            ".title-box p {font-size:13px;color:#4a3c1c;margin-top:2px;}"
+            ".main-content {max-width:960px;width:95%;margin:28px auto;flex:1;}"
+            ".mode-card {background:#fff;border:1px solid #dcdfe4;border-radius:6px;padding:22px;margin-bottom:24px;box-shadow:0 1px 4px rgba(0,0,0,0.04);}"
+            ".mode-card h2 {font-size:17px;color:#333;font-weight:600;margin-bottom:18px;text-align:center;}"
+            ".diagram-row {display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;padding:14px 0;}"
+            ".icon-node {display:flex;flex-direction:column;align-items:center;}"
+            ".icon-node svg {width:46px;height:46px;fill:#2b2b2b;}"
+            ".waves {display:flex;align-items:center;color:#444;font-size:24px;font-weight:700;letter-spacing:-2px;}"
+            ".cable-line {width:70px;height:3px;background:#333;margin:0 10px;position:relative;top:-6px;}"
+            ".btn-gold {background:linear-gradient(to bottom, #deb052, #be8d36);color:#fff;border:1px solid #9f7324;border-radius:4px;padding:9px 36px;font-size:14px;font-weight:700;letter-spacing:1px;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,0.3);box-shadow:0 2px 4px rgba(0,0,0,0.1);transition:all 0.15s;}"
+            ".btn-gold:hover {background:linear-gradient(to bottom, #e5b85a, #c6943c);transform:translateY(-1px);}"
+            ".btn-gold:active {transform:translateY(1px);}"
+            ".modal-overlay {position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;}"
+            ".modal-box {background:#fff;border:2px solid #a3b8cc;border-radius:4px;box-shadow:0 8px 30px rgba(0,0,0,0.3);padding:32px 44px;text-align:center;max-width:540px;width:90%;}"
+            ".dots-loader {display:flex;justify-content:center;gap:8px;margin-bottom:14px;}"
+            ".dot {width:7px;height:7px;background:#2b6cb0;border-radius:50%;animation:pulse 1.2s infinite ease-in-out;}"
+            ".dot:nth-child(2) {animation-delay:0.2s;}"
+            ".dot:nth-child(3) {animation-delay:0.4s;}"
+            ".dot:nth-child(4) {animation-delay:0.6s;}"
+            ".dot:nth-child(5) {animation-delay:0.8s;}"
+            ".dot:nth-child(6) {animation-delay:1.0s;}"
+            "@keyframes pulse {0%,100%{transform:scale(0.8);opacity:0.4;} 50%{transform:scale(1.4);opacity:1;}}"
+            ".scan-text {font-size:15px;color:#2d3748;font-weight:600;}"
+            ".net-item {display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #edf2f7;cursor:pointer;transition:background 0.15s;}"
+            ".net-item:hover {background:#f7fafc;}"
+            ".badge-band {font-size:11px;padding:2px 6px;border-radius:3px;font-weight:600;margin-left:8px;}"
+            ".badge-5g {background:#ebf8ff;color:#2b6cb0;border:1px solid #bee3f8;}"
+            ".badge-24g {background:#feebc8;color:#c05621;border:1px solid #fbd38d;}"
+            ".signal-bar {display:flex;align-items:flex-end;gap:2px;height:14px;margin-left:10px;}"
+            ".bar-seg {width:3px;background:#cbd5e0;border-radius:1px;}"
+            ".bar-on {background:#38a169;}"
+            ".conn-form {background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:18px;margin-top:14px;}"
+            ".input-group {margin-bottom:12px;}"
+            ".input-group label {display:block;font-size:13px;font-weight:600;color:#4a5568;margin-bottom:4px;}"
+            ".input-group input {width:100%;max-width:340px;padding:8px 12px;border:1px solid #cbd5e0;border-radius:4px;font-size:14px;}"
+            ".status-panel {background:#fff;border:1px solid #dcdfe4;border-radius:6px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.05);}"
+            ".status-header {display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid #e2e8f0;margin-bottom:18px;}"
+            ".tag-green {background:#c6f6d5;color:#22543d;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:700;}"
+            ".stat-grid {display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;margin-bottom:20px;}"
+            ".stat-box {background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:14px;}"
+            ".stat-box h4 {font-size:12px;color:#718096;text-transform:uppercase;margin-bottom:4px;}"
+            ".stat-box p {font-size:16px;font-weight:700;color:#2d3748;}"
+            "</style></head><body>"));
+
+  // Send Header
+  c.print(F("<div class='header'>"
+            "<div class='brand-box'>"
+            "<svg viewBox='0 0 24 24'><path d='M12 3c-4.97 0-9.28 2.37-12 6.05l1.53 1.53c2.32-3.17 6.03-5.22 10.47-5.22s8.15 2.05 10.47 5.22l1.53-1.53c-2.72-3.68-7.03-6.05-12-6.05zm0 4.5c-3.67 0-6.85 1.76-8.86 4.47l1.54 1.54c1.65-2.22 4.26-3.65 7.32-3.65s5.67 1.43 7.32 3.65l1.54-1.54c-2.01-2.71-5.19-4.47-8.86-4.47zm0 4.5c-2.38 0-4.44 1.14-5.73 2.9l1.55 1.55c.96-1.31 2.49-2.15 4.18-2.15s3.22.84 4.18 2.15l1.55-1.55c-1.29-1.76-3.35-2.9-5.73-2.9zm0 4.5c-1.2 0-2.22.58-2.86 1.46l2.86 2.87 2.86-2.87c-.64-.88-1.66-1.46-2.86-1.46z'/></svg>"
+            "<span class='brand-sub'>WiFi REPEATER</span>"
+            "</div>"
+            "<div class='title-box'>"
+            "<h1>Extender WiFi Settings</h1>"
+            "<p>Extend the signal of your home WiFi network, through the wall</p>"
+            "</div>"
+            "</div>"
+            "<div class='main-content'>"));
+
+  // Mode Selection / Welcome Wizard Container
+  c.print(F("<div id='view-modes'>"
+            "<div class='mode-card'>"
+            "<h2>Repeater Mode Settings</h2>"
+            "<div class='diagram-row'>"
+            "<div class='icon-node'>"
+            "<svg viewBox='0 0 24 24'><path d='M2 9v11h20v-11h-20zm18 9h-16v-7h16v7zm-14-14h2v3h-2zm10 0h2v3h-2z'/></svg>"
+            "</div>"
+            "<div class='waves'>)))</div>"
+            "<div class='icon-node'>"
+            "<svg viewBox='0 0 24 24'><path d='M6 2v6h2v-6h-2zm10 0v6h2v-6h-2zm-9 8c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-9c0-1.1-.9-2-2-2h-10zm5 11c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z'/></svg>"
+            "</div>"
+            "<div class='waves'>)))</div>"
+            "<div class='icon-node'>"
+            "<svg viewBox='0 0 24 24'><path d='M4 6h16v10h-16v-10zm8 12h-4v2h8v-2h-4zm9-16h-18c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h7v2h-3v2h12v-2h-3v-2h7c1.1 0 2-.9 2-2v-14c0-1.1-.9-2-2-2z'/></svg>"
+            "</div>"
+            "<div style='margin-left:30px;'>"
+            "<button class='btn-gold' onclick='startRepeaterWizard()'>NEXT</button>"
+            "</div>"
+            "</div>"
+            "</div>"
+
+            "<div class='mode-card'>"
+            "<h2>AP Mode Settings</h2>"
+            "<div class='diagram-row'>"
+            "<div class='icon-node'>"
+            "<svg viewBox='0 0 24 24'><path d='M2 9v11h20v-11h-20zm18 9h-16v-7h16v7zm-14-14h2v3h-2zm10 0h2v3h-2z'/></svg>"
+            "</div>"
+            "<div class='cable-line'></div>"
+            "<div class='icon-node'>"
+            "<svg viewBox='0 0 24 24'><path d='M6 2v6h2v-6h-2zm10 0v6h2v-6h-2zm-9 8c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2v-9c0-1.1-.9-2-2-2h-10zm5 11c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z'/></svg>"
+            "</div>"
+            "<div class='waves'>)))</div>"
+            "<div class='icon-node'>"
+            "<svg viewBox='0 0 24 24'><path d='M4 6h16v10h-16v-10zm8 12h-4v2h8v-2h-4zm9-16h-18c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h7v2h-3v2h12v-2h-3v-2h7c1.1 0 2-.9 2-2v-14c0-1.1-.9-2-2-2z'/></svg>"
+            "</div>"
+            "<div style='margin-left:30px;'>"
+            "<button class='btn-gold' onclick='startApWizard()'>NEXT</button>"
+            "</div>"
+            "</div>"
+            "</div>"
+            "</div>"));
+
+  // View: Network Selection / Scan (Photo 2)
+  c.print(F("<div id='view-scan' style='display:none;' class='mode-card'>"
+            "<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;'>"
+            "<h2 style='text-align:left;margin:0;'>Select the WiFi signal to be amplified or manually add a network</h2>"
+            "<button class='btn-gold' style='padding:6px 18px;font-size:12px;' onclick='showManual()'>Manual Setup</button>"
+            "</div>"
+            "<div id='network-list'></div>"
+            "<div id='connect-box' class='conn-form' style='display:none;'>"
+            "<h3 id='selected-ssid-title' style='margin-bottom:12px;font-size:15px;color:#2b6cb0;'></h3>"
+            "<div class='input-group'>"
+            "<label>Home Wi-Fi Password:</label>"
+            "<input type='password' id='inp-pass' placeholder='Enter Wi-Fi password'>"
+            "</div>"
+            "<div class='input-group'>"
+            "<label>Extender Network Name (SSID):</label>"
+            "<input type='text' id='inp-ap-ssid' placeholder='BW16-Repeater'>"
+            "</div>"
+            "<div class='input-group'>"
+            "<label>Extender Password (leave empty for same password):</label>"
+            "<input type='password' id='inp-ap-pass' placeholder='At least 8 characters'>"
+            "</div>"
+            "<button class='btn-gold' onclick='submitConnect()'>Connect & Amplify</button>"
+            "</div>"
+            "</div>"));
+
+  // View: Status Dashboard
+  c.print(F("<div id='view-dashboard' style='display:none;' class='status-panel'>"
+            "<div class='status-header'>"
+            "<div>"
+            "<h2 style='font-size:20px;color:#2d3748;'>Repeater Active & Bridging</h2>"
+            "<p style='font-size:13px;color:#718096;margin-top:2px;'>Hardware L2 Bridge (IEEE 802.1D) with Realtek br_rpt_handle</p>"
+            "</div>"
+            "<span class='tag-green'>L2 BRIDGE ACTIVE</span>"
+            "</div>"
+            "<div class='stat-grid'>"
+            "<div class='stat-box'><h4>Home Wi-Fi</h4><p id='stat-sta-ssid'>-</p></div>"
+            "<div class='stat-box'><h4>Signal (RSSI)</h4><p id='stat-rssi'>-</p></div>"
+            "<div class='stat-box'><h4>Radio Channel</h4><p id='stat-ch'>-</p></div>"
+            "<div class='stat-box'><h4>TX Output Power</h4><p>20 dBm (Max Boost)</p></div>"
+            "<div class='stat-box'><h4>Repeater SSID</h4><p id='stat-ap-ssid'>-</p></div>"
+            "<div class='stat-box'><h4>Uptime</h4><p id='stat-uptime'>-</p></div>"
+            "</div>"
+            "<h3 style='font-size:15px;color:#4a5568;margin-bottom:10px;'>Connected Clients</h3>"
+            "<div id='client-table' style='margin-bottom:20px;'></div>"
+            "<button class='btn-gold' onclick='reconfigure()'>Reconfigure Network</button>"
+            "</div>"));
+
+  // Modal Loader: "Scanning Access Point, please wait ..." (Photo 2)
+  c.print(F("<div id='modal-scan' class='modal-overlay' style='display:none;'>"
+            "<div class='modal-box'>"
+            "<div class='dots-loader'>"
+            "<div class='dot'></div><div class='dot'></div><div class='dot'></div>"
+            "<div class='dot'></div><div class='dot'></div><div class='dot'></div>"
+            "</div>"
+            "<p class='scan-text'>Scanning Access Point, please wait ...</p>"
+            "</div>"
+            "</div>"));
+
+  // Client-Side Logic
+  c.print(F("<script>"
+            "let selectedSsid = '';"
+            "function checkStatus() {"
+            "  fetch('/status_json').then(r=>r.json()).then(d=>{"
+            "    if (d.connected && d.bridge) {"
+            "      document.getElementById('view-modes').style.display = 'none';"
+            "      document.getElementById('view-scan').style.display = 'none';"
+            "      document.getElementById('view-dashboard').style.display = 'block';"
+            "      document.getElementById('stat-sta-ssid').innerText = d.sta_ssid;"
+            "      document.getElementById('stat-rssi').innerText = d.rssi + ' dBm';"
+            "      document.getElementById('stat-ch').innerText = 'Ch ' + d.channel + ' (' + d.band + ')';"
+            "      document.getElementById('stat-ap-ssid').innerText = d.ap_ssid;"
+            "      document.getElementById('stat-uptime').innerText = Math.floor(d.uptime_s / 60) + ' min';"
+            "      let clHtml = '<ul style=\"list-style:none;\">';"
+            "      if (d.clients.length === 0) { clHtml += '<li style=\"color:#a0aec0;font-size:13px;\">No clients currently connected to repeater.</li>'; }"
+            "      d.clients.forEach(c=>{"
+            "        clHtml += '<li style=\"display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid #edf2f7;\"><span>' + c + '</span><button onclick=\"kick(\\'' + c + '\\')\" style=\"color:#e53e3e;background:none;border:none;cursor:pointer;\">Kick</button></li>';"
+            "      });"
+            "      clHtml += '</ul>';"
+            "      document.getElementById('client-table').innerHTML = clHtml;"
+            "    }"
+            "  }).catch(e=>{});"
+            "}"
+            "checkStatus(); setInterval(checkStatus, 6000);"
+
+            "function startRepeaterWizard() {"
+            "  document.getElementById('view-modes').style.display = 'none';"
+            "  document.getElementById('view-scan').style.display = 'block';"
+            "  scanNetworks();"
+            "}"
+
+            "function scanNetworks() {"
+            "  document.getElementById('modal-scan').style.display = 'flex';"
+            "  fetch('/scan_json').then(r=>r.json()).then(d=>{"
+            "    document.getElementById('modal-scan').style.display = 'none';"
+            "    renderNetworks(d.networks);"
+            "  }).catch(e=>{"
+            "    document.getElementById('modal-scan').style.display = 'none';"
+            "  });"
+            "}"
+
+            "function renderNetworks(nets) {"
+            "  let html = '';"
+            "  nets.forEach(n=>{"
+            "    let bars = n.rssi >= -60 ? 4 : (n.rssi >= -72 ? 3 : (n.rssi >= -82 ? 2 : 1));"
+            "    html += '<div class=\"net-item\" onclick=\"pickNet(\\'' + encodeURIComponent(n.ssid) + '\\')\">';"
+            "    html += '<div style=\"display:flex;align-items:center;\"><strong>' + n.ssid + '</strong></div>';"
+            "    html += '<div style=\"display:flex;align-items:center;\"><span style=\"font-size:12px;color:#718096;\">' + n.rssi + ' dBm</span>';"
+            "    html += '<div class=\"signal-bar\">';"
+            "    for (let i=1; i<=4; i++) { html += '<div class=\"bar-seg ' + (i<=bars?'bar-on':'') + '\" style=\"height:' + (i*3+2) + 'px;\"></div>'; }"
+            "    html += '</div></div></div>';"
+            "  });"
+            "  document.getElementById('network-list').innerHTML = html;"
+            "}"
+
+            "function pickNet(s) {"
+            "  selectedSsid = decodeURIComponent(s);"
+            "  document.getElementById('selected-ssid-title').innerText = 'Selected Network: ' + selectedSsid;"
+            "  document.getElementById('inp-ap-ssid').value = selectedSsid + '-EXT';"
+            "  document.getElementById('connect-box').style.display = 'block';"
+            "  document.getElementById('inp-pass').focus();"
+            "}"
+
+            "function showManual() {"
+            "  let manualSsid = prompt('Enter Wi-Fi SSID manually:');"
+            "  if (manualSsid) pickNet(manualSsid);"
+            "}"
+
+            "function submitConnect() {"
+            "  let pass = document.getElementById('inp-pass').value;"
+            "  let apS = document.getElementById('inp-ap-ssid').value;"
+            "  let apP = document.getElementById('inp-ap-pass').value;"
+            "  let body = 'ssid=' + encodeURIComponent(selectedSsid) + '&pass=' + encodeURIComponent(pass) + '&ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP);"
+            "  fetch('/save_wifi', {method:'POST', body:body}).then(r=>r.json()).then(d=>{"
+            "    alert('Settings saved! BW16 is now connecting to ' + selectedSsid + ' and enabling the L2 Bridge. Please reconnect your device to: ' + apS);"
+            "    window.location.reload();"
+            "  });"
+            "}"
+
+            "function kick(mac) {"
+            "  fetch('/kick', {method:'POST', body:'mac=' + mac}).then(()=>checkStatus());"
+            "}"
+
+            "function reconfigure() {"
+            "  document.getElementById('view-dashboard').style.display = 'none';"
+            "  document.getElementById('view-modes').style.display = 'block';"
+            "}"
+
+            "function startApWizard() {"
+            "  let apName = prompt('Enter Access Point SSID:', 'BW16-Hotspot');"
+            "  if (apName) {"
+            "    let apPass = prompt('Enter Access Point Password (min 8 chars):', '12345678');"
+            "    let body = 'ssid=&pass=&ap_ssid=' + encodeURIComponent(apName) + '&ap_pass=' + encodeURIComponent(apPass);"
+            "    fetch('/save_wifi', {method:'POST', body:body}).then(()=>window.location.reload());"
+            "  }"
+            "}"
+            "</script></body></html>"));
 }

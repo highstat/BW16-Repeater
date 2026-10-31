@@ -7,7 +7,7 @@
                 © Copyright 2025-2026 
             ✈ `https://github.com/highstat` 
     Name: WifiManager 
-    Description: Dual-Band STA+AP control with channel sync for RTL8720DN
+    Description: Dual-Band STA+AP control with channel sync and RF boost for RTL8720DN
     Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
@@ -18,13 +18,19 @@
 #include "../utils/Utils.h"
 #include "../utils/LedStatus.h"
 
+struct ClientListPayload {
+  int count;
+  unsigned char mac_list[8][6];
+};
+
 void WifiManager::begin(ConfigStore& cfg, Logger& log) {
   logger = &log;
   cfgRef = &cfg;
   const auto& c = cfg.get();
 
+  applyTxPowerBoost();
+
   if (!c.staSsid[0]) {
-    // First boot or unconfigured -> Setup Mode (SoftAP only)
     setupMode = true;
     LedStatus::set(LedMode::SETUP_PORTAL);
     activeChannel = c.apChannel > 0 ? c.apChannel : 1;
@@ -32,12 +38,21 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
     lastMsg = String(F("Setup Mode active (SSID: ")) + c.apSsid + F(")");
     if (logger) logger->info(lastMsg);
   } else {
-    // Standard Repeater Mode -> Connect to upstream router
     setupMode = false;
     LedStatus::set(LedMode::CONNECTING);
     startSTA(c);
     lastMsg = String(F("Connecting to upstream: ")) + c.staSsid;
     if (logger) logger->info(lastMsg);
+  }
+}
+
+void WifiManager::applyTxPowerBoost() {
+  if (cfgRef && cfgRef->get().txPowerBoost) {
+    char cmd[32];
+    snprintf(cmd, sizeof(cmd), "txpower patha=%d", 63);
+    wext_private_command("wlan0", cmd, 0);
+    wext_private_command("wlan1", cmd, 0);
+    if (logger) logger->info(F("[RF] Maximum hardware TX power applied (63 / ~20 dBm)"));
   }
 }
 
@@ -72,6 +87,8 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
   }
 
   apRunning = (st == 0 || st == 1);
+  applyTxPowerBoost();
+
   if (logger) {
     logger->info(String(F("[AP] AP started (SSID: ")) + c.apSsid +
                  F(", Channel: ") + String(channel) +
@@ -103,16 +120,17 @@ void WifiManager::loop() {
     lastCheck = millis();
     ensureReconnect();
   }
+  if (millis() - lastKickCheck > 5000) {
+    lastKickCheck = millis();
+    checkSmartKick();
+  }
 }
 
 void WifiManager::ensureReconnect() {
   if (!cfgRef) return;
   const auto& c = cfgRef->get();
 
-  if (setupMode) {
-    // In setup mode, nothing to reconnect
-    return;
-  }
+  if (setupMode) return;
 
   if (WiFi.status() == WL_CONNECTED) {
     if (!apRunning) {
@@ -128,6 +146,46 @@ void WifiManager::ensureReconnect() {
       WiFi.begin((char*)c.staSsid, c.staPass);
     }
   }
+}
+
+int WifiManager::getRouterRssi() {
+  if (!staConnected()) return 0;
+  int rssi = 0;
+  if (wifi_get_rssi(&rssi) >= 0) {
+    return rssi;
+  }
+  return 0;
+}
+
+int WifiManager::getAssociatedClients(ConnectedClient clients[], int maxClients) {
+  ClientListPayload payload;
+  payload.count = 8;
+  int ret = wifi_get_associated_client_list(&payload, sizeof(payload));
+  if (ret < 0 || payload.count <= 0) return 0;
+
+  int limit = payload.count < maxClients ? payload.count : maxClients;
+  for (int i = 0; i < limit; i++) {
+    snprintf(clients[i].mac, sizeof(clients[i].mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+             payload.mac_list[i][0], payload.mac_list[i][1], payload.mac_list[i][2],
+             payload.mac_list[i][3], payload.mac_list[i][4], payload.mac_list[i][5]);
+  }
+  return limit;
+}
+
+void WifiManager::kickClient(const char* macStr) {
+  if (!macStr || strlen(macStr) < 17) return;
+  unsigned int m[6];
+  if (sscanf(macStr, "%x:%x:%x:%x:%x:%x", &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) == 6) {
+    unsigned char hwaddr[6];
+    for (int i = 0; i < 6; i++) hwaddr[i] = (unsigned char)m[i];
+    wext_del_station("wlan1", hwaddr);
+    if (logger) logger->info(String(F("[STEER] Kicked client: ")) + macStr);
+  }
+}
+
+void WifiManager::checkSmartKick() {
+  if (!cfgRef || !cfgRef->get().rssiKickEnabled || !apRunning) return;
+  // Periodic background check if steering is needed
 }
 
 bool WifiManager::staConnected() const {

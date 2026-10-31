@@ -7,7 +7,7 @@
                 © Copyright 2025-2026 
             ✈ `https://github.com/highstat` 
     Name: WifiManager 
-    Description: Dual-Band STA+AP control with channel sync for RTL8720DN
+    Description: Dual-Band STA+AP control with channel sync and RF boost for RTL8720DN
     Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
@@ -24,7 +24,15 @@ extern "C" {
   #include "wifi_structures.h"
   #include "wifi_conf.h"
   extern int wifi_get_channel(int *channel);
+  extern int wifi_get_rssi(int *pRSSI);
+  extern int wext_del_station(const char *ifname, unsigned char* hwaddr);
+  extern int wifi_get_associated_client_list(void * client_list_buffer, unsigned short buffer_length);
+  extern int wext_private_command(const char *ifname, char *cmd, int show_msg);
 }
+
+struct ConnectedClient {
+  char mac[18];
+};
 
 class WifiManager {
  public:
@@ -34,21 +42,27 @@ class WifiManager {
   IPAddress staIP() const;
   IPAddress apIP() const;
   int getActiveChannel() const { return activeChannel; }
+  int getRouterRssi();
   bool isSetupMode() const { return setupMode; }
   void restartAP();
   void restartSTA();
   String lastStatusMsg() const { return lastMsg; }
+  void applyTxPowerBoost();
+  int getAssociatedClients(ConnectedClient clients[], int maxClients);
+  void kickClient(const char* macStr);
 
  private:
   void startSTA(const RepeaterConfig& c);
   void startAP(const RepeaterConfig& c, int channel);
   void ensureReconnect();
   void syncChannelAndStartAP();
+  void checkSmartKick();
 
   Logger* logger = nullptr;
   ConfigStore* cfgRef = nullptr;
   unsigned long lastCheck = 0;
   unsigned long lastStaTryMs = 0;
+  unsigned long lastKickCheck = 0;
   bool setupMode = false;
   bool apRunning = false;
   int activeChannel = 1;

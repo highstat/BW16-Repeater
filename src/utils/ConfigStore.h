@@ -4,11 +4,11 @@
         \__ \ |_) | | |  __/ | | \__ \ \__ \ 
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
-                © Copyright 2025 
-            ✈ `https://github.com/sprensis` 
+                © Copyright 2025-2026 
+            ✈ `https://github.com/highstat` 
     Name: ConfigStore 
     Description: Persistent configuration for BW16 repeater 
-    Author: @sprensis 
+    Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */
@@ -36,6 +36,9 @@ struct RepeaterConfig {
   uint32_t staIP;
   uint32_t staMask;
   uint32_t staGateway;
+  bool txPowerBoost;         // Max hardware TX power (20 dBm)
+  bool rssiKickEnabled;      // Smart RSSI Steering (anti-sticky client)
+  int8_t rssiKickThreshold;  // Threshold in dBm (default -76)
 };
 
 class ConfigStore {

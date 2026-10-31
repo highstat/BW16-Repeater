@@ -14,30 +14,26 @@ jobs:
         with:
           path: |
             ~/.arduino15
-          key: ${{ runner.os }}-arduino-${{ hashFiles('**/package-lock.json') }}
+          key: ${{ runner.os }}-arduino-${{ hashFiles('scripts/build.sh') }}
       - name: Prepare Arduino directories
         run: |
           mkdir -p "$HOME/.arduino15"
-          arduino-cli version || true
+          arduino-cli version
       - name: Init Arduino CLI config
         run: |
           arduino-cli config init || true
-          arduino-cli config set board_manager.additional_urls https://downloads.arduino.cc/packages/package_index.json || true
-          arduino-cli config dump || true
-      - name: Install AmebaD core
+          arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/Ameba-AIoT/ameba-arduino-d/dev/Arduino_package/package_realtek_amebad_index.json
+          arduino-cli config dump
+      - name: Build with build.sh
         run: |
-          set -e
-          n=0; until [ "$n" -ge 8 ]; do arduino-cli core update-index && break; n=$((n+1)); echo "retry update-index $n"; sleep 8; done
-          n=0; until [ "$n" -ge 5 ]; do arduino-cli core install realtek:AmebaD && break; n=$((n+1)); echo "retry core install $n"; sleep 10; done
-          arduino-cli board listall | sed -n '1p;/realtek:AmebaD/p' || true
-      - name: Build
-        run: |
-          FQBN=${FQBN:-realtek:AmebaD:Ai-Thinker_BW16}
-          n=0; until [ "$n" -ge 3 ]; do arduino-cli compile --fqbn "$FQBN" ./BW16-WiFi-repeater.ino && break; n=$((n+1)); echo "retry compile $n"; sleep 6; done
-          if [ "$n" -ge 3 ]; then echo "Build failed. Verify FQBN."; arduino-cli board listall | sed -n '1p;/realtek:AmebaD/p'; exit 1; fi
+          bash scripts/build.sh
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: firmware-bin
           path: |
-            ./build/*
+            /tmp/arduino/sketches/*/BW16-Repeater.ino.bin
+            /tmp/arduino/sketches/*/application.axf
+            build/*
+          if-no-files-found: ignore

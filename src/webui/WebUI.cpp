@@ -15,8 +15,8 @@
 
 #include "WebUI.h"
 
-void WebUI::begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, NatManager& nat, DhcpServer& dhcp) {
-  store=&cfg; logger=&log; wifiRef=&wifi; natRef=&nat; dhcpRef=&dhcp; server.begin();
+void WebUI::begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, BridgeManager& bridge, DhcpServer& dhcp) {
+  store=&cfg; logger=&log; wifiRef=&wifi; bridgeRef=&bridge; dhcpRef=&dhcp; server.begin();
 }
 
 void WebUI::loop() {

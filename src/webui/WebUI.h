@@ -4,11 +4,11 @@
         \__ \ |_) | | |  __/ | | \__ \ \__ \ 
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
-                © Copyright 2025 
-            ✈ `https://github.com/sprensis` 
+                © Copyright 2025-2026 
+            ✈ `https://github.com/highstat` 
     Name: WebUI 
-    Description: Embedded web UI with auth 
-    Author: @sprensis 
+    Description: Embedded web UI with auth and Wi-Fi configuration portal
+    Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */
@@ -20,22 +20,22 @@
 #include "../utils/ConfigStore.h"
 #include "../logger/Logger.h"
 #include "../wifi_manager/WifiManager.h"
-#include "../nat_manager/NatManager.h"
+#include "../bridge_manager/BridgeManager.h"
 #include "../dhcp_server/DhcpServer.h"
 #include "../utils/Base64.h"
 #include "../utils/Utils.h"
 
 class WebUI {
  public:
-  void begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, NatManager& nat, DhcpServer& dhcp);
+  void begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, BridgeManager& bridge, DhcpServer& dhcp);
   void loop();
  private:
   void handleClient(WiFiClient& c);
   bool authOk(const String& h);
   WiFiServer server{80};
-  ConfigStore* store;
-  Logger* logger;
-  WifiManager* wifiRef;
-  NatManager* natRef;
-  DhcpServer* dhcpRef;
+  ConfigStore* store = nullptr;
+  Logger* logger = nullptr;
+  WifiManager* wifiRef = nullptr;
+  BridgeManager* bridgeRef = nullptr;
+  DhcpServer* dhcpRef = nullptr;
 };

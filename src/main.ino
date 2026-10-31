@@ -13,6 +13,18 @@
     License: MIT 
 */
 
+extern "C" {
+  extern int wifi_change_channel_plan(uint8_t channel_plan);
+  void wifi_set_country_code(void) {
+    wifi_change_channel_plan(0x25);
+  }
+  uint32_t BKUP_Read(uint32_t DwordIdx);
+  void BKUP_Write(uint32_t DwordIdx, uint32_t WriteVal);
+}
+
+#define DRD_MAGIC 0xD00B1E5E
+
+#include <sys_api.h>
 #include "utils/ConfigStore.h"
 #include "logger/Logger.h"
 #include "wifi_manager/WifiManager.h"
@@ -22,6 +34,7 @@
 #include "webui/WebUI.h"
 #include "utils/Watchdog.h"
 #include "utils/LedStatus.h"
+#include "utils/Utils.h"
 
 ConfigStore configStore;
 Logger logger;
@@ -39,6 +52,28 @@ void setup() {
   configStore.begin();
   configStore.load();
   wdt.begin();
+
+  // Double Reset Detection (DRD)
+  uint32_t rstVal = BKUP_Read(3); // BKUP_REG3
+  if (rstVal == DRD_MAGIC) {
+    BKUP_Write(3, 0);
+    logger.warn(F("[DRD] Physical double-reset detected! Clearing config to Setup Portal..."));
+    configStore.mutableRef().staSsid[0] = 0;
+    configStore.mutableRef().staPass[0] = 0;
+    strncpy(configStore.mutableRef().apSsid, "BW16-Repeater", 63);
+    configStore.mutableRef().apPass[0] = 0;
+    configStore.mutableRef().apChannel = 1;
+    configStore.save();
+    for (int i = 0; i < 6; i++) {
+      LedStatus::set(LedMode::SETUP_PORTAL);
+      delay(80);
+      LedStatus::set(LedMode::ALL_OFF);
+      delay(80);
+    }
+  } else {
+    BKUP_Write(3, DRD_MAGIC);
+  }
+
   logger.info(F("[INIT] Starting BW16 Repeater..."));
   ble.begin(configStore, logger);
   wifi.begin(configStore, logger);
@@ -59,6 +94,20 @@ void loop() {
 
   // If bridge is active, disable DNS captive portal so internet resolves directly
   dhcp.setDnsCaptiveEnabled(!bridge.isBridgeActive());
+
+  static bool drdCleared = false;
+  if (!drdCleared && millis() > 3500) {
+    drdCleared = true;
+    BKUP_Write(3, 0);
+  }
+
+  static unsigned long lastHb = 0;
+  if (millis() - lastHb > 10000) {
+    lastHb = millis();
+    IPAddress curIp = bridge.isBridgeActive() ? wifi.bridgeIP() : wifi.apIP();
+    if (curIp[0] == 0) curIp = wifi.apIP();
+    logger.info(String(F("[HEARTBEAT] IP: ")) + ipToStr(curIp) + F(" | Bridge: ") + (bridge.isBridgeActive() ? F("ACTIVE") : F("STANDBY")));
+  }
 
   if (Serial.available()) {
     static String ln;
@@ -96,9 +145,26 @@ void loop() {
         Serial.println(String("STA IP: ") + ipToStr(wifi.staIP()));
         Serial.println(String("AP SSID: ") + configStore.get().apSsid + " Channel: " + String(wifi.getActiveChannel()));
         Serial.println(String("L2 Bridge: ") + (bridge.isBridgeActive() ? "ACTIVE" : "INACTIVE"));
+      } else if (ln == "scan") {
+        Serial.println("Scanning Wi-Fi networks...");
+        ScannedNetwork nets[32];
+        int n = wifi.scanNetworks(nets, 32);
+        Serial.println(String("Found ") + n + " networks:");
+        for (int i = 0; i < n; i++) {
+          Serial.println(String("  [") + (nets[i].channel > 14 ? "5G" : "2.4G") + " Ch " + nets[i].channel + "] " + nets[i].ssid + " (" + nets[i].rssi + " dBm)");
+        }
+      } else if (ln == "reset" || ln == "factory") {
+        Serial.println("Factory reset: resetting to Setup Portal...");
+        configStore.mutableRef().staSsid[0] = 0;
+        configStore.mutableRef().staPass[0] = 0;
+        strncpy(configStore.mutableRef().apSsid, "BW16-Repeater", 63);
+        configStore.mutableRef().apPass[0] = 0;
+        configStore.mutableRef().apChannel = 1;
+        configStore.save();
+        sys_reset();
       } else if (ln == "reboot") {
         Serial.println("Rebooting...");
-        NVIC_SystemReset();
+        sys_reset();
       }
       ln = "";
     }

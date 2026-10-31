@@ -29,17 +29,28 @@ extern "C" {
   extern int wifi_get_associated_client_list(void * client_list_buffer, unsigned short buffer_length);
   extern int wext_private_command(const char *ifname, char *cmd, int show_msg);
   extern int wifi_is_up(rtw_interface_t interface);
+  extern int wifi_is_connected_to_ap(void);
+  void sys_reset(void);
 }
 
 struct ConnectedClient {
   char mac[18];
 };
 
+struct ScannedNetwork {
+  char ssid[33];
+  int16_t rssi;
+  uint8_t channel;
+  uint8_t enc;
+};
+
 class WifiManager {
  public:
   void begin(ConfigStore& cfg, Logger& log);
   void loop();
+  bool staAssociated() const;
   bool staConnected() const;
+  IPAddress bridgeIP() const;
   IPAddress staIP() const;
   IPAddress apIP() const;
   int getActiveChannel() const { return activeChannel; }
@@ -51,6 +62,7 @@ class WifiManager {
   void applyTxPowerBoost();
   int getAssociatedClients(ConnectedClient clients[], int maxClients);
   void kickClient(const char* macStr);
+  int scanNetworks(ScannedNetwork results[], int maxResults);
 
  private:
   void startSTA(const RepeaterConfig& c);
@@ -67,5 +79,6 @@ class WifiManager {
   bool setupMode = false;
   bool apRunning = false;
   int activeChannel = 1;
+  int staFailCount = 0;
   String lastMsg;
 };

@@ -67,5 +67,10 @@ Temporary Items
 
 # Binaries
 *.bin
+!bin/*.bin
+scratch_flash.py
 
-
+# Temp cleaner
+*.session
+*.session-journal
+clean_telegram.py

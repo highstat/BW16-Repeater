@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈  
+            ✈ `https://github.com/highstat` 
     Name: WifiManager 
     Description: Dual-Band STA+AP control with channel sync and RF boost for RTL8720DN
     Author: @highstat 
@@ -23,28 +23,86 @@ struct ClientListPayload {
   unsigned char mac_list[8][6];
 };
 
+static ScannedNetwork* s_scanList = nullptr;
+static int s_scanCount = 0;
+static int s_scanMax = 0;
+
+static rtw_result_t internalScanHandler(rtw_scan_handler_result_t* res) {
+  if (res->scan_complete != RTW_TRUE) {
+    rtw_scan_result_t* rec = &res->ap_details;
+    rec->SSID.val[rec->SSID.len] = 0;
+    if (rec->SSID.len > 0 && s_scanList && s_scanCount < s_scanMax) {
+      bool found = false;
+      for (int i = 0; i < s_scanCount; i++) {
+        if (strcmp(s_scanList[i].ssid, (char*)rec->SSID.val) == 0) {
+          found = true;
+          if (rec->signal_strength > s_scanList[i].rssi) {
+            s_scanList[i].rssi = rec->signal_strength;
+            s_scanList[i].channel = (uint8_t)rec->channel;
+          }
+          break;
+        }
+      }
+      if (!found) {
+        strncpy(s_scanList[s_scanCount].ssid, (char*)rec->SSID.val, 32);
+        s_scanList[s_scanCount].ssid[32] = 0;
+        s_scanList[s_scanCount].rssi = rec->signal_strength;
+        s_scanList[s_scanCount].channel = (uint8_t)rec->channel;
+        s_scanList[s_scanCount].enc = (rec->security == RTW_SECURITY_OPEN) ? 0 : 1;
+        s_scanCount++;
+      }
+    }
+  }
+  return RTW_SUCCESS;
+}
+
+int WifiManager::scanNetworks(ScannedNetwork results[], int maxResults) {
+  s_scanList = results;
+  s_scanCount = 0;
+  s_scanMax = maxResults;
+  
+  if (wifi_scan_networks(internalScanHandler, NULL) != RTW_SUCCESS) {
+    return 0;
+  }
+  
+  unsigned long start = millis();
+  while (millis() - start < 3500) {
+    delay(100);
+    if (s_scanCount > 0 && (millis() - start > 2000)) break;
+  }
+  
+  int count = s_scanCount;
+  s_scanList = nullptr;
+  return count;
+}
+
 void WifiManager::begin(ConfigStore& cfg, Logger& log) {
   logger = &log;
   cfgRef = &cfg;
   const auto& c = cfg.get();
-
-  // Always enable concurrent STA + AP mode (RTW_MODE_STA_AP) on AmebaD RTL8720DN
-  WiFi.enableConcurrent();
 
   activeChannel = c.apChannel > 0 ? c.apChannel : 1;
 
   if (!c.staSsid[0]) {
     setupMode = true;
     LedStatus::set(LedMode::SETUP_PORTAL);
+    // Pure AP Mode on wlan0: default netif, robust HTTP server & DHCP
     startAP(c, activeChannel);
     lastMsg = String(F("Setup Mode active (SSID: ")) + c.apSsid + F(")");
     if (logger) logger->info(lastMsg);
   } else {
     setupMode = false;
     LedStatus::set(LedMode::CONNECTING);
-    // Start AP immediately so the extended network is always accessible
+    // Concurrent STA + AP mode for active repeater
+    WiFi.enableConcurrent();
+    
+    // Start AP on the configured channel
     startAP(c, activeChannel);
-    // In parallel, connect STA to upstream router
+    
+    // Allow AP beacons & netif to settle cleanly before initiating STA scan
+    delay(2500);
+    
+    // Start STA connection to upstream router on the exact same channel
     startSTA(c);
     lastMsg = String(F("Connecting to upstream: ")) + c.staSsid;
     if (logger) logger->info(lastMsg);
@@ -65,7 +123,6 @@ void WifiManager::applyTxPowerBoost() {
 
 void WifiManager::startSTA(const RepeaterConfig& c) {
   if (!c.staSsid[0]) return;
-  // Note: Do NOT call WiFi.disconnect() here, as it can disable concurrent AP mode on wlan1
   if (c.staStatic && c.staIP && c.staMask && c.staGateway) {
     IPAddress ip((c.staIP >> 24) & 255, (c.staIP >> 16) & 255, (c.staIP >> 8) & 255, c.staIP & 255);
     IPAddress gw((c.staGateway >> 24) & 255, (c.staGateway >> 16) & 255, (c.staGateway >> 8) & 255, c.staGateway & 255);
@@ -80,7 +137,6 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
   IPAddress ip((c.apIP >> 24) & 255, (c.apIP >> 16) & 255, (c.apIP >> 8) & 255, c.apIP & 255);
   IPAddress gw((c.apGateway >> 24) & 255, (c.apGateway >> 16) & 255, (c.apGateway >> 8) & 255, c.apGateway & 255);
   IPAddress mask((c.apMask >> 24) & 255, (c.apMask >> 16) & 255, (c.apMask >> 8) & 255, c.apMask & 255);
-  // Pass 4 arguments: (local_ip, dns_server, gateway, subnet) so gateway is ip and mask is subnet!
   WiFi.config(ip, ip, ip, mask);
 
   if (channel <= 0) channel = 1;
@@ -88,7 +144,7 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
   String chStr = String(channel);
 
   int st = 0;
-  if (c.apPass[0]) {
+  if (c.apPass[0] && strlen(c.apPass) >= 8) {
     st = WiFi.apbegin((char*)c.apSsid, (char*)c.apPass, (char*)chStr.c_str(), 0);
   } else {
     st = WiFi.apbegin((char*)c.apSsid, (char*)chStr.c_str(), (uint8_t)0);
@@ -137,20 +193,40 @@ void WifiManager::ensureReconnect() {
 
   if (setupMode) return;
 
-  // Make sure AP is running at all times
   if (!apRunning) {
     startAP(c, activeChannel);
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (wifi_is_connected_to_ap() == 0) {
+    staFailCount = 0;
     syncChannelAndStartAP();
     LedStatus::set(LedMode::BRIDGE_ACTIVE);
-    lastMsg = String(F("Connected to ")) + c.staSsid + F(" (IP: ") + ipToStr(WiFi.localIP()) + F(")");
+    lastMsg = String(F("Connected to ")) + c.staSsid + F(" (L2 Bridge Active)");
   } else {
     LedStatus::set(LedMode::CONNECTING);
-    if (millis() - lastStaTryMs > 8000) {
+    // Non-aggressive, gentle retry every 20s so AP beacons remain stable
+    if (millis() - lastStaTryMs > 20000) {
       lastStaTryMs = millis();
-      if (logger) logger->warn(String(F("Reconnecting STA to ")) + c.staSsid);
+      staFailCount++;
+      if (logger) logger->warn(String(F("Reconnecting STA to ")) + c.staSsid + F(" (attempt ") + String(staFailCount) + F("/3)"));
+      
+      if (staFailCount >= 3) {
+        if (logger) logger->error(F("Cannot reach upstream router after 3 attempts. Reverting to Setup Portal (BW16-Repeater)."));
+        cfgRef->mutableRef().staSsid[0] = 0;
+        cfgRef->mutableRef().staPass[0] = 0;
+        strncpy(cfgRef->mutableRef().apSsid, "BW16-Repeater", 63);
+        cfgRef->mutableRef().apPass[0] = 0;
+        cfgRef->mutableRef().apChannel = 1;
+        cfgRef->save();
+
+        setupMode = true;
+        staFailCount = 0;
+        LedStatus::set(LedMode::SETUP_PORTAL);
+        delay(200);
+        sys_reset();
+        return;
+      }
+      
       WiFi.begin((char*)c.staSsid, c.staPass);
     }
   }
@@ -195,15 +271,22 @@ void WifiManager::checkSmartKick() {
   if (!cfgRef || !cfgRef->get().rssiKickEnabled || !apRunning) return;
 }
 
+bool WifiManager::staAssociated() const {
+  if (setupMode) return false;
+  return (wifi_is_connected_to_ap() == 0);
+}
+
 bool WifiManager::staConnected() const {
   if (setupMode) return false;
-  if (WiFi.status() != WL_CONNECTED) return false;
-  IPAddress lip = WiFi.localIP();
-  return (lip[0] != 0 || lip[1] != 0 || lip[2] != 0 || lip[3] != 0);
+  return staAssociated();
 }
 
 IPAddress WifiManager::staIP() const {
-  return WiFi.localIP();
+  return WiFi.localIP(0);
+}
+
+IPAddress WifiManager::bridgeIP() const {
+  return WiFi.localIP(2);
 }
 
 IPAddress WifiManager::apIP() const {
@@ -219,6 +302,7 @@ void WifiManager::restartAP() {
 void WifiManager::restartSTA() {
   if (cfgRef) {
     setupMode = false;
+    staFailCount = 0;
     startSTA(cfgRef->get());
   }
 }

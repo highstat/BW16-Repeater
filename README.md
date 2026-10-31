@@ -1,102 +1,107 @@
-<p align="center">
-  <img alt="BW16 Architecture" width="800" src="img/architecture.png">
-</p>
+# BW16 Wi-Fi Repeater
 
-<p align="center">
-  <a href="https://www.amebaiot.com/en/amebad-bw16/"><img src="https://img.shields.io/badge/Platform-BW16%20RTL8720DN-blue.svg" alt="Platform"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/Wi--Fi-Dual--Band%202.4G%20%2F%205G-orange.svg" alt="WiFi">
-  <img src="https://img.shields.io/badge/Architecture-L2%20Transparent%20Bridge-brightgreen.svg" alt="Bridge">
-</p>
+A transparent layer 2 Wi-Fi repeater for the Ai-Thinker BW16 board (Realtek RTL8720DN). It connects to an existing 2.4 GHz or 5 GHz network and rebroadcasts it without double NAT or subnet isolation. Connected devices receive IP addresses directly from your main router.
 
-# BW16 Dual-Band Wi-Fi Repeater (RTL8720DN)
+## Hardware
 
-High-performance, hardware-accelerated Wi-Fi repeater and range extender for the **Ai-Thinker BW16** module (Realtek RTL8720DN dual-core ARM Cortex-M4 @ 200MHz + Cortex-M0 @ 20MHz).
+- Board: Ai-Thinker BW16 (RTL8720DN)
+- CPU: Realtek AmebaD (ARM Cortex-M4 @ 200 MHz, Cortex-M0 @ 20 MHz)
+- Radio: Dual-band 2.4 GHz (802.11b/g/n) and 5 GHz (802.11a/n) 1T1R
 
-Unlike naive software relays or missing L3 NAT implementations, this project runs on **Realtek's native L2 IEEE 802.1D MAC Bridge (`bridgeif`)** with hardware MAC spoofing (`br_rpt_handle`), delivering wire-speed throughput without double-NAT latency.
+## Quick start
 
----
+1. Flash the firmware or use the prebuilt binary in `bin/bw16_repeater_firmware.bin`.
+2. Power on the board.
+3. Connect your computer or phone to the open Wi-Fi network named `BW16-Repeater`.
+4. Open `http://192.168.4.1` in your browser.
+5. Select your home network from the scan list, enter the Wi-Fi password, and click Connect & Amplify.
+6. The repeater applies settings, restarts, connects to your router, and starts the extended network. Connect your devices to the new extended network name shown on the screen.
 
-## ⚡ Key Features
+## How to return to setup
 
-- **True L2 Transparent Bridge (`bridgeif`)**: Connected devices receive IP addresses directly from your home router's DHCP server. No double NAT, full UPnP compatibility, zero port-forwarding issues for security cameras and IoT.
-- **Dual-Band 2.4 GHz & 5 GHz Auto-Sync**: Automatically detects the upstream router channel (including 5 GHz channels 36, 40, 44, 48) and locks the repeater AP to the identical radio synthesizer channel.
-- **Captive Portal Setup Mode**: If no network is configured or connection is lost, boots an open/protected SoftAP at `http://192.168.4.1/` with a DNS hijacking portal and automatic Wi-Fi network scanner.
-- **Hardware RGB LED Telemetry**:
-  - 🔴 **Blinking Red**: Setup / Captive Portal mode active (`192.168.4.1`).
-  - 🔵 **Blinking Blue**: Connecting / Searching for upstream router.
-  - 🟢 **Solid Green**: L2 Bridge ACTIVE & forwarding frames.
-- **Embedded Web UI & BLE Configuration**: Fast status monitoring and credential configuration via Web UI (`http://<IP>/`) and BLE service `0xFFF0`.
+If you entered the wrong password, move the repeater out of router range, or need to reconfigure it, use any of these methods:
 
----
+### Double-tap reset button
+Press the physical RST button on the board twice within three seconds. The repeater erases stored Wi-Fi credentials and restarts into setup mode with the `BW16-Repeater` network.
 
-## 📁 Repository Structure
+### Automatic fallback
+If the repeater cannot reach the configured router after three attempts (around 60 seconds), it automatically clears invalid credentials and returns to setup mode.
 
-```text
-├── BW16-Repeater.ino           # Main Arduino CLI entrypoint
-├── src/
-│   ├── bridge_manager/         # L2 IEEE 802.1D Bridge & Realtek br_rpt_handle glue
-│   ├── wifi_manager/           # Dual-band STA+AP sync & auto-reconnect
-│   ├── dhcp_server/            # Captive Portal DNS resolver (192.168.4.1)
-│   ├── webui/                  # Responsive Web UI configuration & network scanner
-│   ├── ble_config/             # Bluetooth LE (0xFFF0) config service
-│   ├── logger/                 # Serial logging subsystem (115200 baud)
-│   ├── utils/                  # ConfigStore (FlashMemory), Watchdog, LedStatus
-│   └── main.ino                # Application lifecycle and CLI monitor
-├── scripts/
-│   └── build.sh                # 1-click build script with auto-patching
-├── docs/                       # Detailed guides (build, flash, architecture)
-└── img/                        # Architecture diagrams
+### Web interface
+On `http://192.168.4.1`, open the dashboard and click Reset to Setup Portal.
+
+### Serial console
+Connect via serial monitor at 115200 baud and send the command `reset`.
+
+## Status LED
+
+The onboard RGB LED indicates the current state:
+
+- Blinking red: setup mode active (`BW16-Repeater` at `192.168.4.1`).
+- Blinking blue: connecting to upstream Wi-Fi.
+- Solid green: repeater bridge active, client traffic forwarding.
+
+## How it works
+
+The firmware enables concurrent station and access point mode on the RTL8720DN radio. Once associated with the upstream router, the AmebaD kernel activates the IEEE 802.1D bridge (`bridgeif`) across `wlan0` (station) and `wlan1` (access point), disables the internal DHCP server, and passes Ethernet frames transparently.
+
+Because the bridge operates at layer 2:
+- Clients get their IP, default gateway, and DNS servers straight from your main router.
+- Local network devices, printers, Home Assistant, and IP cameras remain visible across both networks.
+- UPnP, mDNS, and broadcast discovery work without configuration.
+
+Note on channel selection: The RTL8720DN uses a single radio transceiver. The repeater AP runs on the exact same radio channel and band as the upstream router you connect to.
+
+## Building from source
+
+### Prerequisites
+
+Install Arduino CLI and the AmebaD core:
+
+```bash
+arduino-cli config init
+arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/Ameba-AIoT/ameba-arduino-d/master/Arduino_package/package_realtek_amebad_index.json
+arduino-cli core update-index
+arduino-cli core install realtek:AmebaD
 ```
 
----
+Enable repeater support in `platform_opts.h`:
+Set `#define CONFIG_EXAMPLE_WLAN_REPEATER 1` in:
+`~/.arduino15/packages/realtek/hardware/AmebaD/3.1.9/system/project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h`
 
-## 🛠️ Build & Compilation
+### Build
 
-### Requirements
-- [arduino-cli](https://arduino.github.io/arduino-cli/latest/) installed on macOS/Linux/Windows.
-- Realtek AmebaD core (`realtek:AmebaD:Ai-Thinker_BW16`).
+Run the build script:
 
-### 1-Click Build
 ```bash
 bash scripts/build.sh
 ```
 
-### Manual Compilation
+Or compile directly:
+
 ```bash
-# Compile with Arduino CLI
 arduino-cli compile --fqbn realtek:AmebaD:Ai-Thinker_BW16 ./
 ```
 
----
+Compiled binaries are placed in `build/` and `bin/`.
 
-## 🚀 Flashing & Upload
+## Flashing
 
-1. Connect the BW16 module via USB-UART adapter (3.3V, TX, RX, GND).
-2. Put the BW16 into download mode:
-   - Hold the **Burn (Download)** button.
-   - Press and release the **RST (Reset)** button.
-   - Release the **Burn** button.
-3. Flash the firmware:
-   ```bash
-   arduino-cli upload -p /dev/tty.usbserial-* --fqbn realtek:AmebaD:Ai-Thinker_BW16 ./
-   ```
+To flash the board over USB:
 
----
+1. Connect the BW16 to your computer with a USB-UART adapter.
+2. Put the board into download mode:
+   - Hold the BURN button.
+   - Press and release the RST button.
+   - Release the BURN button.
+3. Run the flasher:
 
-## 🌐 First-Time Setup (Captive Portal)
+```bash
+python3 do_flash.py
+```
 
-1. Power on the BW16. On first boot, the RGB LED will blink red.
-2. Connect your phone or laptop to the Wi-Fi hotspot:
-   - **SSID**: `BW16-Repeater`
-   - **Password**: `bw16pass` (or open if unconfigured)
-3. Open `http://192.168.4.1/` (or wait for the Captive Portal prompt).
-   - **Default Web Login**: user `admin`, password `admin`
-4. Select your home 2.4 GHz or 5 GHz Wi-Fi network from the scan list, enter your password, and save.
-5. The BW16 will reboot, sync channels, turn the LED solid **Green**, and bridge all traffic seamlessly!
+The script detects the serial port, uploads the image at 1.5 Mbaud, and resets the board.
 
----
+## License
 
-## 📜 License
-
-MIT License © 2025-2026 [highstat](https://github.com/highstat)
+MIT

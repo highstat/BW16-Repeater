@@ -26,8 +26,7 @@ void BridgeManager::begin(ConfigStore& cfg, Logger& log, WifiManager& wifi) {
 
 bool BridgeManager::enableBridge() {
   if (bridgeActive) return true;
-  if (!wifiRef || !wifiRef->staConnected()) {
-    if (logger) logger->warn(F("[BRIDGE] Cannot enable: STA not connected"));
+  if (!wifiRef || !wifiRef->staAssociated()) {
     return false;
   }
 
@@ -38,32 +37,38 @@ bool BridgeManager::enableBridge() {
   bridgeif_add_port_sta_netif();
   bridgeif_add_port_ap_netif();
 
+  // Stop internal AP DHCP server so upstream router provides IP and DNS directly to clients
+  dhcps_deinit();
+
+  // Request DHCP on the bridge interface so the BW16 repeater itself gets an IP from upstream router
+  LwIP_DHCP(0, 1 /* DHCP_START */);
+
   bridgeActive = true;
   if (logger) {
     char macBuf[20];
     snprintf(macBuf, sizeof(macBuf), "%02X:%02X:%02X:%02X:%02X:%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    logger->info(String(F("[BRIDGE] L2 Bridge ACTIVE (MAC: ")) + macBuf + F(")"));
+    logger->info(String(F("[BRIDGE] L2 Hardware Bridge ACTIVATED (MAC: ")) + macBuf + F(")"));
   }
   return true;
 }
 
 void BridgeManager::disableBridge() {
+  if (!bridgeActive) return;
   bridgeActive = false;
   if (logger) logger->info(F("[BRIDGE] Bridge disabled"));
 }
 
 void BridgeManager::loop() {
-  if (millis() - lastCheck > 3000) {
+  if (millis() - lastCheck > 2000) {
     lastCheck = millis();
-    if (wifiRef && wifiRef->staConnected()) {
+    if (wifiRef && wifiRef->staAssociated()) {
       if (!bridgeActive) {
         enableBridge();
       }
     } else {
       if (bridgeActive) {
-        bridgeActive = false;
-        if (logger) logger->warn(F("[BRIDGE] STA disconnected, bridge suspended"));
+        disableBridge();
       }
     }
   }

@@ -22,7 +22,7 @@ jobs:
       - name: Init Arduino CLI config
         run: |
           arduino-cli config init || true
-          arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/Ameba-AIoT/ameba-arduino-d/dev/Arduino_package/package_realtek_amebad_index.json
+          arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/Ameba-AIoT/ameba-arduino-d/master/Arduino_package/package_realtek_amebad_index.json
           arduino-cli config dump
       - name: Build with build.sh
         run: |

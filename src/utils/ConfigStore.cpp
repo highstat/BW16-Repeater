@@ -1,19 +1,20 @@
 /*                                      _     
         ___ _ __  _ __ ___ _ __  ___(_)___ 
-        / __| '_ \| '__/ _ \ '_ \/ __| / __| 
+        / __| '\| '__/ _ \ '\/ __| / __| 
         \__ \ |_) | | |  __/ | | \__ \ \__ \ 
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
             ✈ `https://github.com/highstat` 
     Name: ConfigStore 
-    Description: Persistent configuration for BW16 repeater 
+    Description: Persistent configuration in flash for BW16 repeater 
     Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */
 
 #include "ConfigStore.h"
+#include <FlashMemory.h>
 #include <string.h>
 
 static const uint32_t MAGIC = 0xB8162026;
@@ -42,20 +43,27 @@ void ConfigStore::begin() {
 
 void ConfigStore::load() {
   begin();
-#ifdef FLASHMEMORY_H
-  uint32_t hdr[2];
-  FlashMemory.read(0, (uint8_t*)hdr, sizeof(hdr));
-  if (hdr[0] == MAGIC && hdr[1] == sizeof(RepeaterConfig)) {
-    FlashMemory.read(sizeof(hdr), (uint8_t*)&cfg, sizeof(cfg));
+  FlashMemory.read();
+  uint32_t magic = 0;
+  uint32_t size = 0;
+  if (FlashMemory.buf) {
+    memcpy(&magic, FlashMemory.buf, 4);
+    memcpy(&size, FlashMemory.buf + 4, 4);
+
+    if (magic == MAGIC && size == sizeof(RepeaterConfig)) {
+      memcpy(&cfg, FlashMemory.buf + 8, sizeof(cfg));
+    }
   }
-#endif
 }
 
 void ConfigStore::save() {
-#ifdef FLASHMEMORY_H
-  uint32_t hdr[2] = {MAGIC, sizeof(RepeaterConfig)};
-  FlashMemory.write(0, (const uint8_t*)hdr, sizeof(hdr));
-  FlashMemory.write(sizeof(hdr), (const uint8_t*)&cfg, sizeof(cfg));
-  FlashMemory.commit();
-#endif
+  FlashMemory.read();
+  if (FlashMemory.buf) {
+    uint32_t magic = MAGIC;
+    uint32_t size = sizeof(RepeaterConfig);
+    memcpy(FlashMemory.buf, &magic, 4);
+    memcpy(FlashMemory.buf + 4, &size, 4);
+    memcpy(FlashMemory.buf + 8, &cfg, sizeof(cfg));
+    FlashMemory.update();
+  }
 }

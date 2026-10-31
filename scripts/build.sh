@@ -23,4 +23,13 @@ arduino-cli compile --fqbn "$FQBN" ./ || {
   arduino-cli board listall | sed -n '1p;/realtek:AmebaD/p'
   exit 1
 }
+echo "Locating firmware binary..."
+mkdir -p build bin
+KM_BIN=$(find /tmp/arduino "$HOME/Library/Caches/arduino" "$HOME/.arduino15" -name "km0_km4_image2.bin" 2>/dev/null | head -n 1 || true)
+if [ -n "$KM_BIN" ] && [ -f "$KM_BIN" ]; then
+  cp "$KM_BIN" build/BW16-Repeater.bin
+  cp "$KM_BIN" bin/bw16_repeater_firmware.bin
+  echo "Firmware saved to build/BW16-Repeater.bin and bin/bw16_repeater_firmware.bin"
+fi
+
 echo "Build succeeded!"

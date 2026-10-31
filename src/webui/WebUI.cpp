@@ -14,6 +14,7 @@
 */
 
 #include "WebUI.h"
+#include <sys_api.h>
 
 void WebUI::begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, BridgeManager& bridge, DhcpServer& dhcp) {
   store = &cfg;
@@ -27,7 +28,10 @@ void WebUI::begin(ConfigStore& cfg, Logger& log, WifiManager& wifi, BridgeManage
 
 void WebUI::loop() {
   WiFiClient c = server.available();
-  if (c) handleClient(c);
+  if (c) {
+    if (logger) logger->info(F("[WEB] Client connection accepted"));
+    handleClient(c);
+  }
 }
 
 bool WebUI::authOk(const String& h) {
@@ -41,28 +45,83 @@ bool WebUI::authOk(const String& h) {
   return h.indexOf(needle) >= 0;
 }
 
+static String urlDecode(const String& in) {
+  String out = "";
+  out.reserve(in.length());
+  for (size_t i = 0; i < in.length(); i++) {
+    char ch = in.charAt(i);
+    if (ch == '+') {
+      out += ' ';
+    } else if (ch == '%' && i + 2 < in.length()) {
+      char h1 = in.charAt(i + 1);
+      char h2 = in.charAt(i + 2);
+      int v1 = (h1 >= '0' && h1 <= '9') ? (h1 - '0') : ((h1 >= 'A' && h1 <= 'F') ? (h1 - 'A' + 10) : ((h1 >= 'a' && h1 <= 'f') ? (h1 - 'a' + 10) : -1));
+      int v2 = (h2 >= '0' && h2 <= '9') ? (h2 - '0') : ((h2 >= 'A' && h2 <= 'F') ? (h2 - 'A' + 10) : ((h2 >= 'a' && h2 <= 'f') ? (h2 - 'a' + 10) : -1));
+      if (v1 >= 0 && v2 >= 0) {
+        out += (char)((v1 << 4) | v2);
+        i += 2;
+      } else {
+        out += ch;
+      }
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+static String getParam(const String& body, const String& key) {
+  String k = key + "=";
+  int pos = -1;
+  if (body.startsWith(k)) {
+    pos = 0;
+  } else {
+    pos = body.indexOf("&" + k);
+    if (pos >= 0) pos += 1;
+  }
+  if (pos < 0) return "";
+  int start = pos + k.length();
+  int amp = body.indexOf('&', start);
+  String val = (amp >= 0) ? body.substring(start, amp) : body.substring(start);
+  return urlDecode(val);
+}
+
 void WebUI::handleClient(WiFiClient& c) {
+  c.setRecvTimeout(2000);
   String headers = "";
-  headers.reserve(768);
+  headers.reserve(1024);
   unsigned long t = millis();
-  while (c.connected() && millis() - t < 1200) {
+  while (c.connected() && millis() - t < 1500) {
     while (c.available()) {
-      char ch = c.read();
+      char ch = (char)c.read();
       headers += ch;
       if (headers.endsWith("\r\n\r\n")) goto hdr_done;
     }
+    delay(2);
   }
 hdr_done:
-  String reqLine = headers.substring(0, headers.indexOf("\r\n"));
+  int firstLineEnd = headers.indexOf("\r\n");
+  String reqLine = (firstLineEnd >= 0) ? headers.substring(0, firstLineEnd) : headers;
+  if (logger) logger->info(String(F("[WEB] HTTP: ")) + reqLine);
 
   // Captive Portal probes
-  if (reqLine.startsWith("GET /generate_204") ||
-      reqLine.startsWith("GET /hotspot-detect.html") ||
+  if (reqLine.startsWith("GET /generate_204")) {
+    c.print(F("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+    c.flush();
+    delay(20);
+    c.stop();
+    return;
+  }
+
+  if (reqLine.startsWith("GET /hotspot-detect.html") ||
+      reqLine.startsWith("GET /canonical.html") ||
       reqLine.startsWith("GET /success") ||
       reqLine.startsWith("GET /ncsi.txt") ||
-      reqLine.startsWith("GET /canonical.html")) {
-    String html = F("<html><head><meta http-equiv=\"refresh\" content=\"0;url=/\"></head><body>Redirecting to Extender Setup...</body></html>");
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + String(html.length()) + "\r\n\r\n" + html);
+      reqLine.startsWith("GET /connecttest.txt")) {
+    String html = F("<html><head><meta http-equiv=\"refresh\" content=\"0;url=http://192.168.4.1/\"></head><body>Redirecting to Extender Setup...</body></html>");
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: " + String(html.length()) + "\r\nConnection: close\r\n\r\n" + html);
+    c.flush();
+    delay(20);
     c.stop();
     return;
   }
@@ -94,6 +153,7 @@ hdr_done:
       body += char(c.read());
       if ((int)body.length() >= contentLen) break;
     }
+    delay(2);
   }
 
   // API: Live Status JSON
@@ -103,11 +163,15 @@ hdr_done:
     ConnectedClient clients[8];
     int clientCount = wifiRef->getAssociatedClients(clients, 8);
 
+    bool isBridge = bridgeRef ? bridgeRef->isBridgeActive() : false;
+    IPAddress curIp = isBridge ? wifiRef->bridgeIP() : wifiRef->apIP();
+    if (curIp[0] == 0) curIp = wifiRef->apIP();
+
     String json = "{";
-    json += "\"connected\":" + String(wifiRef->staConnected() ? "true" : "false") + ",";
-    json += "\"bridge\":" + String(bridgeRef->isBridgeActive() ? "true" : "false") + ",";
+    json += "\"connected\":" + String(wifiRef->staAssociated() ? "true" : "false") + ",";
+    json += "\"bridge\":" + String(isBridge ? "true" : "false") + ",";
     json += "\"sta_ssid\":\"" + String(store->get().staSsid) + "\",";
-    json += "\"sta_ip\":\"" + ipToStr(wifiRef->staIP()) + "\",";
+    json += "\"sta_ip\":\"" + ipToStr(curIp) + "\",";
     json += "\"ap_ssid\":\"" + String(store->get().apSsid) + "\",";
     json += "\"ap_ip\":\"" + ipToStr(wifiRef->apIP()) + "\",";
     json += "\"channel\":" + String(ch) + ",";
@@ -128,25 +192,42 @@ hdr_done:
   }
 
   // API: Wi-Fi Scan JSON
+  // API: Wi-Fi Scan JSON with channel & band info
   if (reqLine.startsWith("GET /scan_json")) {
-    int n = WiFi.scanNetworks();
+    ScannedNetwork nets[32];
+    int n = wifiRef ? wifiRef->scanNetworks(nets, 32) : 0;
     String json = "{\"networks\":[";
-    for (int i = 0; i < n; i++) {
-      String s = WiFi.SSID(i);
-      int r = WiFi.RSSI(i);
-      int enc = WiFi.encryptionType(i);
-      if (s.length() == 0) continue;
+    for (int idx = 0; idx < n; idx++) {
       json += "{";
-      json += "\"ssid\":\"" + s + "\",";
-      json += "\"rssi\":" + String(r) + ",";
-      json += "\"enc\":" + String(enc);
+      json += "\"ssid\":\"" + String(nets[idx].ssid) + "\",";
+      json += "\"rssi\":" + String(nets[idx].rssi) + ",";
+      json += "\"enc\":" + String(nets[idx].enc) + ",";
+      json += "\"channel\":" + String(nets[idx].channel) + ",";
+      json += "\"band\":\"" + String(nets[idx].channel > 14 ? "5GHz" : "2.4GHz") + "\"";
       json += "}";
-      if (i < n - 1) json += ",";
+      if (idx < n - 1) json += ",";
     }
     json += "]}";
 
     c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
     c.stop();
+    return;
+  }
+
+  // API: Factory Reset / Setup Mode
+  if (reqLine.startsWith("POST /reset")) {
+    store->mutableRef().staSsid[0] = 0;
+    store->mutableRef().staPass[0] = 0;
+    strncpy(store->mutableRef().apSsid, "BW16-Repeater", 63);
+    store->mutableRef().apPass[0] = 0;
+    store->mutableRef().apChannel = 1;
+    store->save();
+    c.print(F("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"reset\"}"));
+    c.flush();
+    delay(50);
+    c.stop();
+    delay(500);
+    sys_reset();
     return;
   }
 
@@ -166,53 +247,68 @@ hdr_done:
 
   // API: Save Wi-Fi Configuration
   if (reqLine.startsWith("POST /save_wifi")) {
-    int sPos = body.indexOf("ssid=");
-    int pPos = body.indexOf("pass=");
-    int apSPos = body.indexOf("ap_ssid=");
-    int apPPos = body.indexOf("ap_pass=");
+    String s = getParam(body, "ssid");
+    String p = getParam(body, "pass");
+    String apS = getParam(body, "ap_ssid");
+    String apP = getParam(body, "ap_pass");
+    String chStr = getParam(body, "channel");
+    int ch = chStr.toInt();
+    if (ch > 0 && ch <= 165) {
+      store->mutableRef().apChannel = (uint8_t)ch;
+    } else {
+      store->mutableRef().apChannel = 1;
+    }
 
-    if (sPos >= 0) {
-      int amp = body.indexOf('&', sPos);
-      String sv = body.substring(sPos + 5, amp >= 0 ? amp : body.length());
-      sv.replace("+", " ");
-      sv.trim();
-      strncpy(store->mutableRef().staSsid, sv.c_str(), 63);
+    if (s.length() > 0) {
+      strncpy(store->mutableRef().staSsid, s.c_str(), 63);
+      store->mutableRef().staSsid[63] = 0;
     }
-    if (pPos >= 0) {
-      int amp = body.indexOf('&', pPos);
-      String pv = body.substring(pPos + 5, amp >= 0 ? amp : body.length());
-      pv.trim();
-      strncpy(store->mutableRef().staPass, pv.c_str(), 63);
+    strncpy(store->mutableRef().staPass, p.c_str(), 63);
+    store->mutableRef().staPass[63] = 0;
+
+    if (apS.length() > 0) {
+      strncpy(store->mutableRef().apSsid, apS.c_str(), 63);
+      store->mutableRef().apSsid[63] = 0;
+    } else if (s.length() > 0) {
+      String defAp = s + "-EXT";
+      strncpy(store->mutableRef().apSsid, defAp.c_str(), 63);
+      store->mutableRef().apSsid[63] = 0;
     }
-    if (apSPos >= 0) {
-      int amp = body.indexOf('&', apSPos);
-      String asv = body.substring(apSPos + 8, amp >= 0 ? amp : body.length());
-      asv.replace("+", " ");
-      asv.trim();
-      if (asv.length() > 0) strncpy(store->mutableRef().apSsid, asv.c_str(), 63);
-    }
-    if (apPPos >= 0) {
-      int amp = body.indexOf('&', apPPos);
-      String apv = body.substring(apPPos + 8, amp >= 0 ? amp : body.length());
-      apv.trim();
-      if (apv.length() >= 8) strncpy(store->mutableRef().apPass, apv.c_str(), 63);
+
+    if (apP.length() >= 8) {
+      strncpy(store->mutableRef().apPass, apP.c_str(), 63);
+      store->mutableRef().apPass[63] = 0;
+    } else if (apP.length() == 0 && p.length() >= 8) {
+      // User left extender password empty -> inherit home router password!
+      strncpy(store->mutableRef().apPass, p.c_str(), 63);
+      store->mutableRef().apPass[63] = 0;
+    } else if (apP.length() == 0 && p.length() == 0) {
+      // Open network
+      store->mutableRef().apPass[0] = 0;
     }
 
     store->mutableRef().mode = RepeaterMode::BRIDGE;
     store->save();
 
+    if (logger) {
+      logger->info(String(F("[CONFIG] Saved to Flash: STA=")) + store->get().staSsid +
+                   F(", AP=") + store->get().apSsid +
+                   F(" (PassLen: ") + String(strlen(store->get().apPass)) + F(")"));
+    }
+
     String resp = F("{\"status\":\"saved\",\"message\":\"Connecting to Wi-Fi... Please reconnect to extended network.\"}");
     c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + String(resp.length()) + "\r\n\r\n" + resp);
+    c.flush();
+    delay(50);
     c.stop();
 
     delay(800);
-    NVIC_SystemReset();
+    sys_reset();
     return;
   }
 
   // SERVE MAIN HTML (Extender WiFi Settings UI matching photo)
   serveMainPage(c);
-  c.stop();
 }
 
 void WebUI::serveMainPage(WiFiClient& c) {
@@ -373,6 +469,7 @@ void WebUI::serveMainPage(WiFiClient& c) {
             "<h3 style='font-size:15px;color:#4a5568;margin-bottom:10px;'>Connected Clients</h3>"
             "<div id='client-table' style='margin-bottom:20px;'></div>"
             "<button class='btn-gold' onclick='reconfigure()'>Reconfigure Network</button>"
+            "<button class='btn-gold' style='background:#e53e3e;margin-left:12px;' onclick='resetFactory()'>Reset to Setup Portal</button>"
             "</div>"));
 
   // Modal Loader: "Scanning Access Point, please wait ..." (Photo 2)
@@ -387,101 +484,120 @@ void WebUI::serveMainPage(WiFiClient& c) {
             "</div>"));
 
   // Client-Side Logic
-  c.print(F("<script>"
-            "let selectedSsid = '';"
-            "function checkStatus() {"
-            "  fetch('/status_json').then(r=>r.json()).then(d=>{"
-            "    if (d.connected && d.bridge) {"
-            "      document.getElementById('view-modes').style.display = 'none';"
-            "      document.getElementById('view-scan').style.display = 'none';"
-            "      document.getElementById('view-dashboard').style.display = 'block';"
-            "      document.getElementById('stat-sta-ssid').innerText = d.sta_ssid;"
-            "      document.getElementById('stat-rssi').innerText = d.rssi + ' dBm';"
-            "      document.getElementById('stat-ch').innerText = 'Ch ' + d.channel + ' (' + d.band + ')';"
-            "      document.getElementById('stat-ap-ssid').innerText = d.ap_ssid;"
-            "      document.getElementById('stat-uptime').innerText = Math.floor(d.uptime_s / 60) + ' min';"
-            "      let clHtml = '<ul style=\"list-style:none;\">';"
-            "      if (d.clients.length === 0) { clHtml += '<li style=\"color:#a0aec0;font-size:13px;\">No clients currently connected to repeater.</li>'; }"
-            "      d.clients.forEach(c=>{"
-            "        clHtml += '<li style=\"display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid #edf2f7;\"><span>' + c + '</span><button onclick=\"kick(\\'' + c + '\\')\" style=\"color:#e53e3e;background:none;border:none;cursor:pointer;\">Kick</button></li>';"
-            "      });"
-            "      clHtml += '</ul>';"
-            "      document.getElementById('client-table').innerHTML = clHtml;"
-            "    }"
-            "  }).catch(e=>{});"
-            "}"
-            "checkStatus(); setInterval(checkStatus, 6000);"
+  c.print(F(R"rawliteral(<script>
+let selectedSsid = '';
+let selectedChannel = 1;
 
-            "function startRepeaterWizard() {"
-            "  document.getElementById('view-modes').style.display = 'none';"
-            "  document.getElementById('view-scan').style.display = 'block';"
-            "  scanNetworks();"
-            "}"
+function checkStatus() {
+  fetch('/status_json').then(r=>r.json()).then(d=>{
+    if (d.connected && d.bridge) {
+      document.getElementById('view-modes').style.display = 'none';
+      document.getElementById('view-scan').style.display = 'none';
+      document.getElementById('view-dashboard').style.display = 'block';
+      document.getElementById('stat-sta-ssid').innerText = d.sta_ssid;
+      document.getElementById('stat-rssi').innerText = d.rssi + ' dBm';
+      document.getElementById('stat-ch').innerText = 'Ch ' + d.channel + ' (' + d.band + ')';
+      document.getElementById('stat-ap-ssid').innerText = d.ap_ssid;
+      document.getElementById('stat-uptime').innerText = Math.floor(d.uptime_s / 60) + ' min';
+      let clHtml = '<ul style="list-style:none;">';
+      if (d.clients.length === 0) { clHtml += '<li style="color:#a0aec0;font-size:13px;">No clients currently connected to repeater.</li>'; }
+      d.clients.forEach(c=>{
+        clHtml += '<li style="display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid #edf2f7;"><span>' + c + '</span><button onclick="kick('' + c + '')" style="color:#e53e3e;background:none;border:none;cursor:pointer;">Kick</button></li>';
+      });
+      clHtml += '</ul>';
+      document.getElementById('client-table').innerHTML = clHtml;
+    }
+  }).catch(e=>{});
+}
+checkStatus();
+setInterval(checkStatus, 6000);
 
-            "function scanNetworks() {"
-            "  document.getElementById('modal-scan').style.display = 'flex';"
-            "  fetch('/scan_json').then(r=>r.json()).then(d=>{"
-            "    document.getElementById('modal-scan').style.display = 'none';"
-            "    renderNetworks(d.networks);"
-            "  }).catch(e=>{"
-            "    document.getElementById('modal-scan').style.display = 'none';"
-            "  });"
-            "}"
+function startRepeaterWizard() {
+  document.getElementById('view-modes').style.display = 'none';
+  document.getElementById('view-scan').style.display = 'block';
+  scanNetworks();
+}
 
-            "function renderNetworks(nets) {"
-            "  let html = '';"
-            "  nets.forEach(n=>{"
-            "    let bars = n.rssi >= -60 ? 4 : (n.rssi >= -72 ? 3 : (n.rssi >= -82 ? 2 : 1));"
-            "    html += '<div class=\"net-item\" onclick=\"pickNet(\\'' + encodeURIComponent(n.ssid) + '\\')\">';"
-            "    html += '<div style=\"display:flex;align-items:center;\"><strong>' + n.ssid + '</strong></div>';"
-            "    html += '<div style=\"display:flex;align-items:center;\"><span style=\"font-size:12px;color:#718096;\">' + n.rssi + ' dBm</span>';"
-            "    html += '<div class=\"signal-bar\">';"
-            "    for (let i=1; i<=4; i++) { html += '<div class=\"bar-seg ' + (i<=bars?'bar-on':'') + '\" style=\"height:' + (i*3+2) + 'px;\"></div>'; }"
-            "    html += '</div></div></div>';"
-            "  });"
-            "  document.getElementById('network-list').innerHTML = html;"
-            "}"
+function scanNetworks() {
+  document.getElementById('modal-scan').style.display = 'flex';
+  fetch('/scan_json').then(r=>r.json()).then(d=>{
+    document.getElementById('modal-scan').style.display = 'none';
+    renderNetworks(d.networks);
+  }).catch(e=>{
+    document.getElementById('modal-scan').style.display = 'none';
+  });
+}
 
-            "function pickNet(s) {"
-            "  selectedSsid = decodeURIComponent(s);"
-            "  document.getElementById('selected-ssid-title').innerText = 'Selected Network: ' + selectedSsid;"
-            "  document.getElementById('inp-ap-ssid').value = selectedSsid + '-EXT';"
-            "  document.getElementById('connect-box').style.display = 'block';"
-            "  document.getElementById('inp-pass').focus();"
-            "}"
+function renderNetworks(nets) {
+  let html = '';
+  nets.forEach(n=>{
+    let bars = n.rssi >= -60 ? 4 : (n.rssi >= -72 ? 3 : (n.rssi >= -82 ? 2 : 1));
+    let bandLabel = n.channel > 14 ? '5 GHz' : '2.4 GHz';
+    let badgeStyle = n.channel > 14 ? 'background:#ebf8ff;color:#2b6cb0;' : 'background:#f0fff4;color:#276749;';
+    html += '<div class="net-item" onclick="pickNet(' + JSON.stringify(n.ssid) + ',' + (n.channel||1) + ')">';
+    html += '<div style="display:flex;align-items:center;"><strong>' + n.ssid + '</strong><span style="margin-left:8px;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600;' + badgeStyle + '">' + bandLabel + ' (Ch ' + n.channel + ')</span></div>';
+    html += '<div style="display:flex;align-items:center;"><span style="font-size:12px;color:#718096;margin-right:8px;">' + n.rssi + ' dBm</span>';
+    html += '<div class="signal-bar">';
+    for (let j=1; j<=4; j++) { html += '<div class="bar-seg ' + (j<=bars?'bar-on':'') + '" style="height:' + (j*3+2) + 'px;"></div>'; }
+    html += '</div></div></div>';
+  });
+  document.getElementById('network-list').innerHTML = html;
+}
 
-            "function showManual() {"
-            "  let manualSsid = prompt('Enter Wi-Fi SSID manually:');"
-            "  if (manualSsid) pickNet(manualSsid);"
-            "}"
+function pickNet(s, ch) {
+  selectedSsid = decodeURIComponent(s);
+  selectedChannel = ch || 1;
+  let band = selectedChannel > 14 ? '5 GHz' : '2.4 GHz';
+  document.getElementById('selected-ssid-title').innerText = 'Selected Network: ' + selectedSsid + ' [' + band + ', Channel ' + selectedChannel + ']';
+  document.getElementById('inp-ap-ssid').value = selectedSsid + '-EXT';
+  document.getElementById('connect-box').style.display = 'block';
+  document.getElementById('inp-pass').focus();
+}
 
-            "function submitConnect() {"
-            "  let pass = document.getElementById('inp-pass').value;"
-            "  let apS = document.getElementById('inp-ap-ssid').value;"
-            "  let apP = document.getElementById('inp-ap-pass').value;"
-            "  let body = 'ssid=' + encodeURIComponent(selectedSsid) + '&pass=' + encodeURIComponent(pass) + '&ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP);"
-            "  fetch('/save_wifi', {method:'POST', body:body}).then(r=>r.json()).then(d=>{"
-            "    alert('Settings saved! BW16 is now connecting to ' + selectedSsid + ' and enabling the L2 Bridge. Please reconnect your device to: ' + apS);"
-            "    window.location.reload();"
-            "  });"
-            "}"
+function showManual() {
+  let manualSsid = prompt('Enter Wi-Fi SSID manually:');
+  if (manualSsid) pickNet(manualSsid, 1);
+}
 
-            "function kick(mac) {"
-            "  fetch('/kick', {method:'POST', body:'mac=' + mac}).then(()=>checkStatus());"
-            "}"
+function submitConnect() {
+  let pass = document.getElementById('inp-pass').value;
+  let apS = document.getElementById('inp-ap-ssid').value;
+  let apP = document.getElementById('inp-ap-pass').value;
+  let targetAp = apS || (selectedSsid + '-EXT');
+  let body = 'ssid=' + encodeURIComponent(selectedSsid) + '&pass=' + encodeURIComponent(pass) + '&ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP) + '&channel=' + selectedChannel;
+  document.getElementById('connect-box').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">✔ Настройки сохранены!</h3><p style="color:#4a5568;margin-top:10px;font-size:14px;">Плата перезагружается и запускает репитер...<br><br>Подключайся к сети: <strong style="color:#c29944;font-size:16px;">' + targetAp + '</strong></p></div>';
+  fetch('/save_wifi', {method:'POST', body:body}).catch(e=>{});
+}
 
-            "function reconfigure() {"
-            "  document.getElementById('view-dashboard').style.display = 'none';"
-            "  document.getElementById('view-modes').style.display = 'block';"
-            "}"
+function resetFactory() {
+  if (confirm('Reset repeater back to Setup Portal mode (BW16-Repeater)?')) {
+    fetch('/reset', {method:'POST'}).then(()=>{
+      alert('Repeater reset. Please connect to Wi-Fi: BW16-Repeater');
+      setTimeout(()=>{ window.location.reload(); }, 3000);
+    });
+  }
+}
 
-            "function startApWizard() {"
-            "  let apName = prompt('Enter Access Point SSID:', 'BW16-Hotspot');"
-            "  if (apName) {"
-            "    let apPass = prompt('Enter Access Point Password (min 8 chars):', '12345678');"
-            "    let body = 'ssid=&pass=&ap_ssid=' + encodeURIComponent(apName) + '&ap_pass=' + encodeURIComponent(apPass);"
-            "    fetch('/save_wifi', {method:'POST', body:body}).then(()=>window.location.reload());"
-            "  }"
-            "}"
-            "</script></body></html>"));
+function kick(mac) {
+  fetch('/kick', {method:'POST', body:'mac=' + mac}).then(()=>checkStatus());
+}
+
+function reconfigure() {
+  document.getElementById('view-dashboard').style.display = 'none';
+  document.getElementById('view-modes').style.display = 'block';
+}
+
+function startApWizard() {
+  let apName = prompt('Enter Access Point SSID:', 'BW16-Hotspot');
+  if (apName) {
+    let apPass = prompt('Enter Access Point Password (min 8 chars):', '12345678');
+    let body = 'ssid=&pass=&ap_ssid=' + encodeURIComponent(apName) + '&ap_pass=' + encodeURIComponent(apPass) + '&channel=1';
+    fetch('/save_wifi', {method:'POST', body:body}).then(()=>window.location.reload());
+  }
+}
+</script></body></html>)rawliteral"));
+  c.flush();
+  delay(80);
+  c.stop();
+  if (logger) logger->info(F("[WEB] Setup page served cleanly"));
 }

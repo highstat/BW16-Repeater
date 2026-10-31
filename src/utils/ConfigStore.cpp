@@ -23,7 +23,7 @@ void ConfigStore::begin() {
   cfg.mode = RepeaterMode::BRIDGE;
   cfg.prefer5g = true;
   strcpy(cfg.apSsid, "BW16-Repeater");
-  strcpy(cfg.apPass, "bw16pass");
+  cfg.apPass[0] = 0;
   cfg.apChannel = 1;
   cfg.apAutoChannel = true;
   strcpy(cfg.webUser, "admin");

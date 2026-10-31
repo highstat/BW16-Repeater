@@ -28,6 +28,7 @@ extern "C" {
   extern int wext_del_station(const char *ifname, unsigned char* hwaddr);
   extern int wifi_get_associated_client_list(void * client_list_buffer, unsigned short buffer_length);
   extern int wext_private_command(const char *ifname, char *cmd, int show_msg);
+  extern int wifi_is_up(rtw_interface_t interface);
 }
 
 struct ConnectedClient {

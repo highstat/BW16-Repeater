@@ -31,8 +31,6 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
   // Always enable concurrent STA + AP mode (RTW_MODE_STA_AP) on AmebaD RTL8720DN
   WiFi.enableConcurrent();
 
-  applyTxPowerBoost();
-
   activeChannel = c.apChannel > 0 ? c.apChannel : 1;
 
   if (!c.staSsid[0]) {
@@ -57,9 +55,13 @@ void WifiManager::applyTxPowerBoost() {
   if (cfgRef && cfgRef->get().txPowerBoost) {
     char cmd[32];
     snprintf(cmd, sizeof(cmd), "txpower patha=%d", 63);
-    wext_private_command("wlan0", cmd, 0);
-    wext_private_command("wlan1", cmd, 0);
-    if (logger) logger->info(F("[RF] Maximum hardware TX power applied (63 / ~20 dBm)"));
+    if (wifi_is_up(RTW_STA_INTERFACE)) {
+      wext_private_command("wlan0", cmd, 0);
+    }
+    if (wifi_is_up(RTW_AP_INTERFACE)) {
+      wext_private_command("wlan1", cmd, 0);
+    }
+    if (logger) logger->info(F("[RF] Hardware TX power boost applied (63 / ~20 dBm)"));
   }
 }
 
@@ -80,7 +82,8 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
   IPAddress ip((c.apIP >> 24) & 255, (c.apIP >> 16) & 255, (c.apIP >> 8) & 255, c.apIP & 255);
   IPAddress gw((c.apGateway >> 24) & 255, (c.apGateway >> 16) & 255, (c.apGateway >> 8) & 255, c.apGateway & 255);
   IPAddress mask((c.apMask >> 24) & 255, (c.apMask >> 16) & 255, (c.apMask >> 8) & 255, c.apMask & 255);
-  WiFi.config(ip, gw, mask);
+  // Pass 4 arguments: (local_ip, dns_server, gateway, subnet) so gateway is ip and mask is subnet!
+  WiFi.config(ip, ip, ip, mask);
 
   if (channel <= 0) channel = 1;
   activeChannel = channel;

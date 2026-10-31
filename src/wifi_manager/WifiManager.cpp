@@ -52,16 +52,14 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
 }
 
 void WifiManager::applyTxPowerBoost() {
+  if (setupMode) return; // Do not boost RF in setup portal mode
   if (cfgRef && cfgRef->get().txPowerBoost) {
-    char cmd[32];
-    snprintf(cmd, sizeof(cmd), "txpower patha=%d", 63);
     if (wifi_is_up(RTW_STA_INTERFACE)) {
+      char cmd[32];
+      snprintf(cmd, sizeof(cmd), "txpower patha=%d", 63);
       wext_private_command("wlan0", cmd, 0);
+      if (logger) logger->info(F("[RF] Hardware TX power boost applied (63 / ~20 dBm)"));
     }
-    if (wifi_is_up(RTW_AP_INTERFACE)) {
-      wext_private_command("wlan1", cmd, 0);
-    }
-    if (logger) logger->info(F("[RF] Hardware TX power boost applied (63 / ~20 dBm)"));
   }
 }
 
@@ -96,8 +94,10 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
     st = WiFi.apbegin((char*)c.apSsid, (char*)chStr.c_str(), (uint8_t)0);
   }
 
-  apRunning = (st == 0 || st == 1);
-  applyTxPowerBoost();
+  apRunning = (st == WL_CONNECTED || st == 0 || st == 1);
+  if (!setupMode) {
+    applyTxPowerBoost();
+  }
 
   if (logger) {
     logger->info(String(F("[AP] AP active (SSID: ")) + c.apSsid +

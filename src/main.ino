@@ -39,12 +39,13 @@ void setup() {
   configStore.begin();
   configStore.load();
   wdt.begin();
+  logger.info(F("[INIT] Starting BW16 Repeater..."));
   ble.begin(configStore, logger);
   wifi.begin(configStore, logger);
   dhcp.begin(configStore, logger);
   bridge.begin(configStore, logger, wifi);
   webui.begin(configStore, logger, wifi, bridge, dhcp);
-  logger.info(F("[MAIN] BW16 L2 Transparent Wi-Fi Repeater initialized"));
+  logger.info(F("[INIT] All subsystems initialized successfully!"));
 }
 
 void loop() {

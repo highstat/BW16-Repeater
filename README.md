@@ -1,5 +1,9 @@
 # BW16 Wi-Fi Repeater
 
+<p align="center">
+  <img alt="BW16 Architecture" width="800" src="img/architecture.png">
+</p>
+
 A transparent layer 2 Wi-Fi repeater for the Ai-Thinker BW16 board (Realtek RTL8720DN). It connects to an existing 2.4 GHz or 5 GHz network and rebroadcasts it without double NAT or subnet isolation. Connected devices receive IP addresses directly from your main router.
 
 ## Hardware

@@ -205,8 +205,8 @@ hdr_done:
     c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + String(resp.length()) + "\r\n\r\n" + resp);
     c.stop();
 
-    delay(400);
-    wifiRef->restartSTA();
+    delay(800);
+    NVIC_SystemReset();
     return;
   }
 
@@ -224,25 +224,25 @@ void WebUI::serveMainPage(WiFiClient& c) {
             "<title>Extender WiFi Settings</title><style>"
             "* {box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}"
             "body {background:#f3f5f8;color:#333;min-height:100vh;display:flex;flex-direction:column;}"
-            ".header {background:linear-gradient(to right, #c29944, #d3a44a);padding:14px 28px;display:flex;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,0.15);}"
-            ".brand-box {display:flex;flex-direction:column;align-items:center;margin-right:24px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,0.3);}"
-            ".brand-box svg {width:38px;height:38px;fill:#fff;}"
+            ".header {background:#0f172a;padding:16px 28px;display:flex;align-items:center;border-bottom:1px solid #1e293b;box-shadow:0 1px 3px rgba(0,0,0,0.1);}"
+            ".brand-box {display:flex;align-items:center;margin-right:20px;color:#38bdf8;}"
+            ".brand-box svg {width:32px;height:32px;fill:currentColor;}"
             ".brand-sub {font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-top:2px;}"
-            ".title-box h1 {font-size:22px;color:#2b220e;font-weight:700;}"
-            ".title-box p {font-size:13px;color:#4a3c1c;margin-top:2px;}"
+            ".title-box h1 {font-size:18px;color:#f8fafc;font-weight:600;letter-spacing:-0.2px;}"
+            ".title-box p {font-size:12px;color:#94a3b8;margin-top:2px;}"
             ".main-content {max-width:960px;width:95%;margin:28px auto;flex:1;}"
-            ".mode-card {background:#fff;border:1px solid #dcdfe4;border-radius:6px;padding:22px;margin-bottom:24px;box-shadow:0 1px 4px rgba(0,0,0,0.04);}"
+            ".mode-card {background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,0.03);}"
             ".mode-card h2 {font-size:17px;color:#333;font-weight:600;margin-bottom:18px;text-align:center;}"
             ".diagram-row {display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;padding:14px 0;}"
             ".icon-node {display:flex;flex-direction:column;align-items:center;}"
             ".icon-node svg {width:46px;height:46px;fill:#2b2b2b;}"
             ".waves {display:flex;align-items:center;color:#444;font-size:24px;font-weight:700;letter-spacing:-2px;}"
             ".cable-line {width:70px;height:3px;background:#333;margin:0 10px;position:relative;top:-6px;}"
-            ".btn-gold {background:linear-gradient(to bottom, #deb052, #be8d36);color:#fff;border:1px solid #9f7324;border-radius:4px;padding:9px 36px;font-size:14px;font-weight:700;letter-spacing:1px;cursor:pointer;text-shadow:0 1px 2px rgba(0,0,0,0.3);box-shadow:0 2px 4px rgba(0,0,0,0.1);transition:all 0.15s;}"
-            ".btn-gold:hover {background:linear-gradient(to bottom, #e5b85a, #c6943c);transform:translateY(-1px);}"
+            ".btn-gold {background:#0f172a;color:#ffffff;border:1px solid #0f172a;border-radius:8px;padding:10px 32px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.05);transition:all 0.15s;}"
+            ".btn-gold:hover {background:#1e293b;border-color:#1e293b;transform:translateY(-1px);}"
             ".btn-gold:active {transform:translateY(1px);}"
             ".modal-overlay {position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;}"
-            ".modal-box {background:#fff;border:2px solid #a3b8cc;border-radius:4px;box-shadow:0 8px 30px rgba(0,0,0,0.3);padding:32px 44px;text-align:center;max-width:540px;width:90%;}"
+            ".modal-box {background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 20px 40px rgba(0,0,0,0.12);padding:32px 40px;text-align:center;max-width:440px;width:90%;}"
             ".dots-loader {display:flex;justify-content:center;gap:8px;margin-bottom:14px;}"
             ".dot {width:7px;height:7px;background:#2b6cb0;border-radius:50%;animation:pulse 1.2s infinite ease-in-out;}"
             ".dot:nth-child(2) {animation-delay:0.2s;}"
@@ -263,7 +263,7 @@ void WebUI::serveMainPage(WiFiClient& c) {
             ".conn-form {background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px;padding:18px;margin-top:14px;}"
             ".input-group {margin-bottom:12px;}"
             ".input-group label {display:block;font-size:13px;font-weight:600;color:#4a5568;margin-bottom:4px;}"
-            ".input-group input {width:100%;max-width:340px;padding:8px 12px;border:1px solid #cbd5e0;border-radius:4px;font-size:14px;}"
+            ".input-group input {width:100%;max-width:380px;padding:9px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;outline:none;transition:border-color 0.15s;}"
             ".status-panel {background:#fff;border:1px solid #dcdfe4;border-radius:6px;padding:24px;box-shadow:0 1px 4px rgba(0,0,0,0.05);}"
             ".status-header {display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid #e2e8f0;margin-bottom:18px;}"
             ".tag-green {background:#c6f6d5;color:#22543d;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:700;}"
@@ -277,11 +277,10 @@ void WebUI::serveMainPage(WiFiClient& c) {
   c.print(F("<div class='header'>"
             "<div class='brand-box'>"
             "<svg viewBox='0 0 24 24'><path d='M12 3c-4.97 0-9.28 2.37-12 6.05l1.53 1.53c2.32-3.17 6.03-5.22 10.47-5.22s8.15 2.05 10.47 5.22l1.53-1.53c-2.72-3.68-7.03-6.05-12-6.05zm0 4.5c-3.67 0-6.85 1.76-8.86 4.47l1.54 1.54c1.65-2.22 4.26-3.65 7.32-3.65s5.67 1.43 7.32 3.65l1.54-1.54c-2.01-2.71-5.19-4.47-8.86-4.47zm0 4.5c-2.38 0-4.44 1.14-5.73 2.9l1.55 1.55c.96-1.31 2.49-2.15 4.18-2.15s3.22.84 4.18 2.15l1.55-1.55c-1.29-1.76-3.35-2.9-5.73-2.9zm0 4.5c-1.2 0-2.22.58-2.86 1.46l2.86 2.87 2.86-2.87c-.64-.88-1.66-1.46-2.86-1.46z'/></svg>"
-            "<span class='brand-sub'>WiFi REPEATER</span>"
             "</div>"
             "<div class='title-box'>"
-            "<h1>Extender WiFi Settings</h1>"
-            "<p>Extend the signal of your home WiFi network, through the wall</p>"
+            "<h1>Extender Settings</h1>"
+            "<p>High-performance transparent L2 bridge</p>"
             "</div>"
             "</div>"
             "<div class='main-content'>"));

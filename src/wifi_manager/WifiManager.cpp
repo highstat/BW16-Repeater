@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈ `https://github.com/highstat` 
+            ✈  
     Name: WifiManager 
     Description: Dual-Band STA+AP control with channel sync and RF boost for RTL8720DN
     Author: @highstat 
@@ -28,18 +28,25 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
   cfgRef = &cfg;
   const auto& c = cfg.get();
 
+  // Always enable concurrent STA + AP mode (RTW_MODE_STA_AP) on AmebaD RTL8720DN
+  WiFi.enableConcurrent();
+
   applyTxPowerBoost();
+
+  activeChannel = c.apChannel > 0 ? c.apChannel : 1;
 
   if (!c.staSsid[0]) {
     setupMode = true;
     LedStatus::set(LedMode::SETUP_PORTAL);
-    activeChannel = c.apChannel > 0 ? c.apChannel : 1;
     startAP(c, activeChannel);
     lastMsg = String(F("Setup Mode active (SSID: ")) + c.apSsid + F(")");
     if (logger) logger->info(lastMsg);
   } else {
     setupMode = false;
     LedStatus::set(LedMode::CONNECTING);
+    // Start AP immediately so the extended network is always accessible
+    startAP(c, activeChannel);
+    // In parallel, connect STA to upstream router
     startSTA(c);
     lastMsg = String(F("Connecting to upstream: ")) + c.staSsid;
     if (logger) logger->info(lastMsg);
@@ -58,7 +65,7 @@ void WifiManager::applyTxPowerBoost() {
 
 void WifiManager::startSTA(const RepeaterConfig& c) {
   if (!c.staSsid[0]) return;
-  WiFi.disconnect();
+  // Note: Do NOT call WiFi.disconnect() here, as it can disable concurrent AP mode on wlan1
   if (c.staStatic && c.staIP && c.staMask && c.staGateway) {
     IPAddress ip((c.staIP >> 24) & 255, (c.staIP >> 16) & 255, (c.staIP >> 8) & 255, c.staIP & 255);
     IPAddress gw((c.staGateway >> 24) & 255, (c.staGateway >> 16) & 255, (c.staGateway >> 8) & 255, c.staGateway & 255);
@@ -90,29 +97,24 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
   applyTxPowerBoost();
 
   if (logger) {
-    logger->info(String(F("[AP] AP started (SSID: ")) + c.apSsid +
+    logger->info(String(F("[AP] AP active (SSID: ")) + c.apSsid +
                  F(", Channel: ") + String(channel) +
                  (channel > 14 ? F(" [5GHz]") : F(" [2.4GHz]")) +
                  F(", Status: ") + String(st) + F(")"));
   }
-  delay(100);
 }
 
 void WifiManager::syncChannelAndStartAP() {
   if (!cfgRef) return;
   int ch = 0;
-  if (wifi_get_channel(&ch) >= 0 && ch > 0) {
+  if (wifi_get_channel(&ch) >= 0 && ch > 0 && ch != activeChannel) {
     activeChannel = ch;
-  } else {
-    activeChannel = cfgRef->get().apChannel > 0 ? cfgRef->get().apChannel : 6;
+    if (logger) {
+      logger->info(String(F("[WIFI] Upstream STA synced on channel: ")) + String(activeChannel) +
+                   (activeChannel > 14 ? F(" (5GHz)") : F(" (2.4GHz)")));
+    }
+    startAP(cfgRef->get(), activeChannel);
   }
-
-  if (logger) {
-    logger->info(String(F("[WIFI] Upstream STA synced on channel: ")) + String(activeChannel) +
-                 (activeChannel > 14 ? F(" (5GHz)") : F(" (2.4GHz)")));
-  }
-
-  startAP(cfgRef->get(), activeChannel);
 }
 
 void WifiManager::loop() {
@@ -132,10 +134,13 @@ void WifiManager::ensureReconnect() {
 
   if (setupMode) return;
 
+  // Make sure AP is running at all times
+  if (!apRunning) {
+    startAP(c, activeChannel);
+  }
+
   if (WiFi.status() == WL_CONNECTED) {
-    if (!apRunning) {
-      syncChannelAndStartAP();
-    }
+    syncChannelAndStartAP();
     LedStatus::set(LedMode::BRIDGE_ACTIVE);
     lastMsg = String(F("Connected to ")) + c.staSsid + F(" (IP: ") + ipToStr(WiFi.localIP()) + F(")");
   } else {
@@ -185,7 +190,6 @@ void WifiManager::kickClient(const char* macStr) {
 
 void WifiManager::checkSmartKick() {
   if (!cfgRef || !cfgRef->get().rssiKickEnabled || !apRunning) return;
-  // Periodic background check if steering is needed
 }
 
 bool WifiManager::staConnected() const {

@@ -21,6 +21,7 @@
 
 extern "C" {
   void sys_reset(void);
+  void BKUP_Write(uint32_t DwordIdx, uint32_t WriteVal);
 }
 
 
@@ -144,8 +145,10 @@ hdr_done:
     return;
   }
 
-  // Read body if POST
+  // Read body if POST (case-insensitive header & robust read)
   int clPos = headers.indexOf("Content-Length:");
+  if (clPos < 0) clPos = headers.indexOf("content-length:");
+  if (clPos < 0) clPos = headers.indexOf("Content-length:");
   int contentLen = 0;
   if (clPos >= 0) {
     int endLine = headers.indexOf("\r\n", clPos);
@@ -155,20 +158,22 @@ hdr_done:
       contentLen = v.toInt();
     }
   }
-  if (contentLen < 0 || contentLen > 2048) {
+  if (contentLen > 2048) {
     c.print(F("HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"));
     c.stop();
     return;
   }
   String body = "";
-  body.reserve(contentLen > 0 ? contentLen : 256);
-  unsigned long t2 = millis();
-  while (c.connected() && (int)body.length() < contentLen && millis() - t2 < 1500) {
-    while (c.available()) {
-      body += char(c.read());
-      if ((int)body.length() >= contentLen) break;
+  if (reqLine.startsWith("POST")) {
+    body.reserve(contentLen > 0 ? contentLen : 256);
+    unsigned long t2 = millis();
+    while (c.connected() && (contentLen > 0 ? (int)body.length() < contentLen : millis() - t2 < 400) && millis() - t2 < 1500) {
+      while (c.available()) {
+        body += char(c.read());
+        if (contentLen > 0 && (int)body.length() >= contentLen) break;
+      }
+      delay(2);
     }
-    delay(2);
   }
 
   // API: Live Status JSON
@@ -244,7 +249,8 @@ hdr_done:
     c.flush();
     delay(50);
     c.stop();
-    delay(400);
+    BKUP_Write(3, 0);
+    delay(300);
     sys_reset();
     return;
   }
@@ -302,7 +308,8 @@ hdr_done:
     c.flush();
     delay(50);
     c.stop();
-    delay(400);
+    BKUP_Write(3, 0);
+    delay(300);
     sys_reset();
     return;
   }
@@ -340,7 +347,8 @@ hdr_done:
     c.flush();
     delay(50);
     c.stop();
-    delay(400);
+    BKUP_Write(3, 0);
+    delay(300);
     sys_reset();
     return;
   }
@@ -642,7 +650,11 @@ function submitRepeater() {
   document.getElementById('rep-form').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">Settings Applied</h3><p style="color:#4a5568;margin-top:10px;font-size:13px;">Repeater is connecting to home router and restarting...<br><br>Connect your devices to: <strong style="color:#be8d36;font-size:15px;">' + esc(targetAp) + '</strong></p></div>';
 
   let body = 'ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p) + '&ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP) + '&channel=' + encodeURIComponent(ch);
-  fetch('/save_wifi', {method:'POST', body:body}).catch(e=>{});
+  fetch('/save_wifi', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body
+  }).catch(e=>{});
 }
 
 function submitApMode() {
@@ -653,7 +665,11 @@ function submitApMode() {
   document.getElementById('view-ap').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">Access Point Started</h3><p style="color:#4a5568;margin-top:10px;font-size:13px;">Board is rebooting into Standalone Access Point mode...<br><br>Connect your devices to: <strong style="color:#be8d36;font-size:15px;">' + esc(apS) + '</strong></p></div>';
 
   let body = 'ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP) + '&channel=' + encodeURIComponent(ch);
-  fetch('/save_ap', {method:'POST', body:body}).catch(e=>{});
+  fetch('/save_ap', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body
+  }).catch(e=>{});
 }
 
 function showResetModal() {

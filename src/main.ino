@@ -169,6 +169,7 @@ void loop() {
           sys_reset();
         } else if (ln == "reboot") {
           Serial.println("Rebooting...");
+          BKUP_Write(3, 0);
           sys_reset();
         }
         ln = "";

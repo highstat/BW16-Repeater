@@ -45,8 +45,7 @@ bool BridgeManager::enableBridge() {
   // Stop internal AP DHCP server so upstream router provides IP and DNS directly to clients
   dhcps_deinit();
 
-  // Request DHCP on the bridge interface so the BW16 repeater itself gets an IP from upstream router
-  LwIP_DHCP(0, 1 /* DHCP_START */);
+  // L2 bridge forwards DHCP directly via br_rpt_handle
 
   bridgeActive = true;
   if (logger) {

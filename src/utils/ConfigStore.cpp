@@ -52,6 +52,12 @@ void ConfigStore::load() {
 
     if (magic == MAGIC && size == sizeof(RepeaterConfig)) {
       memcpy(&cfg, FlashMemory.buf + 8, sizeof(cfg));
+      cfg.staSsid[sizeof(cfg.staSsid) - 1] = 0;
+      cfg.staPass[sizeof(cfg.staPass) - 1] = 0;
+      cfg.apSsid[sizeof(cfg.apSsid) - 1] = 0;
+      cfg.apPass[sizeof(cfg.apPass) - 1] = 0;
+      cfg.webUser[sizeof(cfg.webUser) - 1] = 0;
+      cfg.webPass[sizeof(cfg.webPass) - 1] = 0;
     }
   }
 }

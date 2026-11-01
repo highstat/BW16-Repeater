@@ -26,31 +26,34 @@ struct ClientListPayload {
 static ScannedNetwork* s_scanList = nullptr;
 static int s_scanCount = 0;
 static int s_scanMax = 0;
+static volatile bool s_scanDone = false;
 
 static rtw_result_t internalScanHandler(rtw_scan_handler_result_t* res) {
-  if (res->scan_complete != RTW_TRUE) {
-    rtw_scan_result_t* rec = &res->ap_details;
+  if (res->scan_complete == RTW_TRUE) {
+    s_scanDone = true;
+    return RTW_SUCCESS;
+  }
+  rtw_scan_result_t* rec = &res->ap_details;
+  if (rec->SSID.len > 0 && rec->SSID.len <= 32 && s_scanList && s_scanCount < s_scanMax) {
     rec->SSID.val[rec->SSID.len] = 0;
-    if (rec->SSID.len > 0 && s_scanList && s_scanCount < s_scanMax) {
-      bool found = false;
-      for (int i = 0; i < s_scanCount; i++) {
-        if (strcmp(s_scanList[i].ssid, (char*)rec->SSID.val) == 0) {
-          found = true;
-          if (rec->signal_strength > s_scanList[i].rssi) {
-            s_scanList[i].rssi = rec->signal_strength;
-            s_scanList[i].channel = (uint8_t)rec->channel;
-          }
-          break;
+    bool found = false;
+    for (int i = 0; i < s_scanCount; i++) {
+      if (strcmp(s_scanList[i].ssid, (char*)rec->SSID.val) == 0) {
+        found = true;
+        if (rec->signal_strength > s_scanList[i].rssi) {
+          s_scanList[i].rssi = rec->signal_strength;
+          s_scanList[i].channel = (uint8_t)rec->channel;
         }
+        break;
       }
-      if (!found) {
-        strncpy(s_scanList[s_scanCount].ssid, (char*)rec->SSID.val, 32);
-        s_scanList[s_scanCount].ssid[32] = 0;
-        s_scanList[s_scanCount].rssi = rec->signal_strength;
-        s_scanList[s_scanCount].channel = (uint8_t)rec->channel;
-        s_scanList[s_scanCount].enc = (rec->security == RTW_SECURITY_OPEN) ? 0 : 1;
-        s_scanCount++;
-      }
+    }
+    if (!found && s_scanCount < s_scanMax) {
+      strncpy(s_scanList[s_scanCount].ssid, (char*)rec->SSID.val, 32);
+      s_scanList[s_scanCount].ssid[32] = 0;
+      s_scanList[s_scanCount].rssi = rec->signal_strength;
+      s_scanList[s_scanCount].channel = (uint8_t)rec->channel;
+      s_scanList[s_scanCount].enc = (rec->security == RTW_SECURITY_OPEN) ? 0 : 1;
+      s_scanCount++;
     }
   }
   return RTW_SUCCESS;
@@ -60,15 +63,16 @@ int WifiManager::scanNetworks(ScannedNetwork results[], int maxResults) {
   s_scanList = results;
   s_scanCount = 0;
   s_scanMax = maxResults;
+  s_scanDone = false;
   
   if (wifi_scan_networks(internalScanHandler, NULL) != RTW_SUCCESS) {
+    s_scanList = nullptr;
     return 0;
   }
   
   unsigned long start = millis();
-  while (millis() - start < 3500) {
+  while (!s_scanDone && (millis() - start < 4000)) {
     delay(100);
-    if (s_scanCount > 0 && (millis() - start > 2000)) break;
   }
   
   int count = s_scanCount;
@@ -127,7 +131,7 @@ void WifiManager::startSTA(const RepeaterConfig& c) {
     IPAddress ip((c.staIP >> 24) & 255, (c.staIP >> 16) & 255, (c.staIP >> 8) & 255, c.staIP & 255);
     IPAddress gw((c.staGateway >> 24) & 255, (c.staGateway >> 16) & 255, (c.staGateway >> 8) & 255, c.staGateway & 255);
     IPAddress mask((c.staMask >> 24) & 255, (c.staMask >> 16) & 255, (c.staMask >> 8) & 255, c.staMask & 255);
-    WiFi.config(ip, gw, mask);
+    WiFi.config(ip, gw, gw, mask);
   }
   WiFi.begin((char*)c.staSsid, c.staPass);
   lastStaTryMs = millis();

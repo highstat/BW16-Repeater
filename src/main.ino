@@ -109,64 +109,71 @@ void loop() {
     logger.info(String(F("[HEARTBEAT] IP: ")) + ipToStr(curIp) + F(" | Bridge: ") + (bridge.isBridgeActive() ? F("ACTIVE") : F("STANDBY")));
   }
 
-  if (Serial.available()) {
-    static String ln;
-    while (Serial.available()) {
-      char ch = Serial.read();
-      if (ch == '\n' || ch == '\r') break;
-      ln += ch;
-    }
-    if (ln.length()) {
-      if (ln.startsWith("set_sta ")) {
-        int sp = ln.indexOf(' ', 8);
-        String ssid = ln.substring(8, sp > 0 ? sp : ln.length());
-        String pass = "";
-        if (sp > 0) pass = ln.substring(sp + 1);
-        strncpy(configStore.mutableRef().staSsid, ssid.c_str(), 63);
-        strncpy(configStore.mutableRef().staPass, pass.c_str(), 63);
-        configStore.save();
-        wifi.restartSTA();
-        Serial.println("OK: STA config updated");
-      } else if (ln.startsWith("set_ap ")) {
-        int p1 = ln.indexOf(' ', 7);
-        int p2 = p1 > 0 ? ln.indexOf(' ', p1 + 1) : -1;
-        int p3 = p2 > 0 ? ln.indexOf(' ', p2 + 1) : -1;
-        String ssid = p1 > 0 ? ln.substring(7, p1) : ln.substring(7);
-        String pass = p2 > 0 ? ln.substring(p1 + 1, p2) : "";
-        int ch = p3 > 0 ? ln.substring(p2 + 1, p3).toInt() : (p2 > 0 ? ln.substring(p2 + 1).toInt() : configStore.get().apChannel);
-        strncpy(configStore.mutableRef().apSsid, ssid.c_str(), 63);
-        strncpy(configStore.mutableRef().apPass, pass.c_str(), 63);
-        configStore.mutableRef().apChannel = (uint8_t)ch;
-        configStore.save();
-        wifi.restartAP();
-        Serial.println("OK: AP config updated");
-      } else if (ln == "status" || ln == "show") {
-        Serial.println(String("STA SSID: ") + configStore.get().staSsid + " (Connected: " + (wifi.staConnected() ? "YES" : "NO") + ")");
-        Serial.println(String("STA IP: ") + ipToStr(wifi.staIP()));
-        Serial.println(String("AP SSID: ") + configStore.get().apSsid + " Channel: " + String(wifi.getActiveChannel()));
-        Serial.println(String("L2 Bridge: ") + (bridge.isBridgeActive() ? "ACTIVE" : "INACTIVE"));
-      } else if (ln == "scan") {
-        Serial.println("Scanning Wi-Fi networks...");
-        ScannedNetwork nets[32];
-        int n = wifi.scanNetworks(nets, 32);
-        Serial.println(String("Found ") + n + " networks:");
-        for (int i = 0; i < n; i++) {
-          Serial.println(String("  [") + (nets[i].channel > 14 ? "5G" : "2.4G") + " Ch " + nets[i].channel + "] " + nets[i].ssid + " (" + nets[i].rssi + " dBm)");
+  static String ln;
+  while (Serial.available()) {
+    char ch = (char)Serial.read();
+    if (ch == '\n' || ch == '\r') {
+      if (ln.length() > 0) {
+        ln.trim();
+        if (ln.startsWith("set_sta ")) {
+          int sp = ln.indexOf(' ', 8);
+          String ssid = ln.substring(8, sp > 0 ? sp : ln.length());
+          String pass = "";
+          if (sp > 0) pass = ln.substring(sp + 1);
+          strncpy(configStore.mutableRef().staSsid, ssid.c_str(), 63);
+          configStore.mutableRef().staSsid[63] = 0;
+          strncpy(configStore.mutableRef().staPass, pass.c_str(), 63);
+          configStore.mutableRef().staPass[63] = 0;
+          configStore.save();
+          wifi.restartSTA();
+          Serial.println("OK: STA config updated");
+        } else if (ln.startsWith("set_ap ")) {
+          int p1 = ln.indexOf(' ', 7);
+          int p2 = p1 > 0 ? ln.indexOf(' ', p1 + 1) : -1;
+          int p3 = p2 > 0 ? ln.indexOf(' ', p2 + 1) : -1;
+          String ssid = p1 > 0 ? ln.substring(7, p1) : ln.substring(7);
+          String pass = p2 > 0 ? ln.substring(p1 + 1, p2) : "";
+          int ch = p3 > 0 ? ln.substring(p2 + 1, p3).toInt() : (p2 > 0 ? ln.substring(p2 + 1).toInt() : configStore.get().apChannel);
+          strncpy(configStore.mutableRef().apSsid, ssid.c_str(), 63);
+          configStore.mutableRef().apSsid[63] = 0;
+          strncpy(configStore.mutableRef().apPass, pass.c_str(), 63);
+          configStore.mutableRef().apPass[63] = 0;
+          configStore.mutableRef().apChannel = (uint8_t)ch;
+          configStore.save();
+          wifi.restartAP();
+          Serial.println("OK: AP config updated");
+        } else if (ln == "status" || ln == "show") {
+          Serial.println(String("STA SSID: ") + configStore.get().staSsid + " (Connected: " + (wifi.staConnected() ? "YES" : "NO") + ")");
+          Serial.println(String("STA IP: ") + ipToStr(wifi.staIP()));
+          Serial.println(String("AP SSID: ") + configStore.get().apSsid + " Channel: " + String(wifi.getActiveChannel()));
+          Serial.println(String("L2 Bridge: ") + (bridge.isBridgeActive() ? "ACTIVE" : "INACTIVE"));
+        } else if (ln == "scan") {
+          Serial.println("Scanning Wi-Fi networks...");
+          ScannedNetwork nets[32];
+          int n = wifi.scanNetworks(nets, 32);
+          Serial.println(String("Found ") + n + " networks:");
+          for (int i = 0; i < n; i++) {
+            Serial.println(String("  [") + (nets[i].channel > 14 ? "5G" : "2.4G") + " Ch " + nets[i].channel + "] " + nets[i].ssid + " (" + nets[i].rssi + " dBm)");
+          }
+        } else if (ln == "reset" || ln == "factory") {
+          Serial.println("Factory reset: resetting to Setup Portal...");
+          configStore.mutableRef().staSsid[0] = 0;
+          configStore.mutableRef().staPass[0] = 0;
+          strncpy(configStore.mutableRef().apSsid, "BW16-Repeater", 63);
+          configStore.mutableRef().apPass[0] = 0;
+          configStore.mutableRef().apChannel = 1;
+          configStore.save();
+          sys_reset();
+        } else if (ln == "reboot") {
+          Serial.println("Rebooting...");
+          sys_reset();
         }
-      } else if (ln == "reset" || ln == "factory") {
-        Serial.println("Factory reset: resetting to Setup Portal...");
-        configStore.mutableRef().staSsid[0] = 0;
-        configStore.mutableRef().staPass[0] = 0;
-        strncpy(configStore.mutableRef().apSsid, "BW16-Repeater", 63);
-        configStore.mutableRef().apPass[0] = 0;
-        configStore.mutableRef().apChannel = 1;
-        configStore.save();
-        sys_reset();
-      } else if (ln == "reboot") {
-        Serial.println("Rebooting...");
-        sys_reset();
+        ln = "";
       }
-      ln = "";
+    } else {
+      if (ln.length() < 128) {
+        ln += ch;
+      }
     }
   }
 }

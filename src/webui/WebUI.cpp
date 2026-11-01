@@ -96,6 +96,7 @@ void WebUI::handleClient(WiFiClient& c) {
       char ch = (char)c.read();
       headers += ch;
       if (headers.endsWith("\r\n\r\n")) goto hdr_done;
+      if (headers.length() > 2048) { c.stop(); return; }
     }
     delay(2);
   }
@@ -145,6 +146,11 @@ hdr_done:
       contentLen = v.toInt();
     }
   }
+  if (contentLen < 0 || contentLen > 2048) {
+    c.print(F("HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"));
+    c.stop();
+    return;
+  }
   String body = "";
   body.reserve(contentLen > 0 ? contentLen : 256);
   unsigned long t2 = millis();
@@ -186,7 +192,7 @@ hdr_done:
     }
     json += "]}";
 
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
     c.stop();
     return;
   }
@@ -209,7 +215,7 @@ hdr_done:
     }
     json += "]}";
 
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
+    c.print("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + String(json.length()) + "\r\n\r\n" + json);
     c.stop();
     return;
   }
@@ -233,14 +239,11 @@ hdr_done:
 
   // API: Kick Client
   if (reqLine.startsWith("POST /kick")) {
-    int mPos = body.indexOf("mac=");
-    if (mPos >= 0) {
-      int amp = body.indexOf('&', mPos);
-      String mac = body.substring(mPos + 4, amp >= 0 ? amp : body.length());
-      mac.trim();
+    String mac = getParam(body, "mac");
+    if (mac.length() >= 17) {
       wifiRef->kickClient(mac.c_str());
     }
-    c.print("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK");
+    c.print(F("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK"));
     c.stop();
     return;
   }
@@ -485,7 +488,10 @@ void WebUI::serveMainPage(WiFiClient& c) {
 
   // Client-Side Logic
   c.print(F(R"rawliteral(<script>
-let selectedSsid = '';
+function esc(s) {
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+let selectedSsid = "";
 let selectedChannel = 1;
 
 function checkStatus() {
@@ -535,7 +541,7 @@ function renderNetworks(nets) {
     let bandLabel = n.channel > 14 ? '5 GHz' : '2.4 GHz';
     let badgeStyle = n.channel > 14 ? 'background:#ebf8ff;color:#2b6cb0;' : 'background:#f0fff4;color:#276749;';
     html += '<div class="net-item" onclick="pickNet(' + JSON.stringify(n.ssid) + ',' + (n.channel||1) + ')">';
-    html += '<div style="display:flex;align-items:center;"><strong>' + n.ssid + '</strong><span style="margin-left:8px;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600;' + badgeStyle + '">' + bandLabel + ' (Ch ' + n.channel + ')</span></div>';
+    html += '<div style="display:flex;align-items:center;"><strong>' + esc(n.ssid) + '</strong><span style="margin-left:8px;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600;' + badgeStyle + '">' + bandLabel + ' (Ch ' + n.channel + ')</span></div>';
     html += '<div style="display:flex;align-items:center;"><span style="font-size:12px;color:#718096;margin-right:8px;">' + n.rssi + ' dBm</span>';
     html += '<div class="signal-bar">';
     for (let j=1; j<=4; j++) { html += '<div class="bar-seg ' + (j<=bars?'bar-on':'') + '" style="height:' + (j*3+2) + 'px;"></div>'; }

@@ -37,15 +37,24 @@ The chip is now waiting for a UART synchronization handshake at 115200 baud, whi
 
 The repository provides a cross-platform flashing script that automatically detects serial ports and writes the firmware image:
 
-```bash
-python3 do_flash.py
-```
-
-To specify the serial port explicitly:
-
-```bash
-python3 do_flash.py --port /dev/cu.usbserial-10 --baud 1500000
-```
+- **Windows**:
+  ```cmd
+  python do_flash.py
+  # Or with explicit COM port:
+  python do_flash.py --port COM3
+  ```
+- **macOS**:
+  ```bash
+  python3 do_flash.py
+  # Or with explicit port:
+  python3 do_flash.py --port /dev/cu.usbserial-10
+  ```
+- **Linux**:
+  ```bash
+  python3 do_flash.py
+  # Or with explicit port:
+  python3 do_flash.py --port /dev/ttyUSB0
+  ```
 
 The script performs the following steps:
 1. Connects to the serial port.

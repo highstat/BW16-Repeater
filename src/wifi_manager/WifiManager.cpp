@@ -90,9 +90,6 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
 
   activeChannel = c.apChannel > 0 ? c.apChannel : 1;
 
-  // Always enable concurrent mode so STA can scan while AP runs
-  WiFi.enableConcurrent();
-
   if (c.mode == RepeaterMode::AP) {
     setupMode = false;
     LedStatus::set(LedMode::BRIDGE_ACTIVE);
@@ -108,6 +105,8 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
   } else {
     setupMode = false;
     LedStatus::set(LedMode::CONNECTING);
+    // Concurrent STA + AP mode only for active repeater connecting to upstream router
+    WiFi.enableConcurrent();
     startAP(c, activeChannel);
     delay(1500);
     startSTA(c);

@@ -615,8 +615,8 @@ function renderNetworks(nets) {
   document.getElementById('network-list').innerHTML = html;
 }
 
-// Initial scan on load
-scanNetworks();
+// Show initial placeholder (scan on demand to avoid channel-hop during connection)
+renderNetworks([]);
 
 function pickNet(s, ch) {
   document.getElementById('inp-sta-ssid').value = s;

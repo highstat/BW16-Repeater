@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈ `https://github.com/highstat` 
+            `https://github.com/highstat/BW16-Repeater` 
     Name: WifiManager 
     Description: Dual-Band STA+AP control with channel sync and RF boost for RTL8720DN
     Author: @highstat 

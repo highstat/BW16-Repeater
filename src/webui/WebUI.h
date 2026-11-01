@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈ `https://github.com/highstat` 
+            `https://github.com/highstat/BW16-Repeater` 
     Name: WebUI 
     Description: Commercial-grade Extender WiFi Settings portal & Dashboard
     Author: @highstat 

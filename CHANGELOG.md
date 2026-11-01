@@ -1,3 +1,18 @@
+# 0.2.1 (2026-11-01)
+
+- **Double-Reset Recovery (DRD)**: Implemented hardware reset detection via AmebaD RTC backup register `BKUP_REG3`. Double-pressing the physical RST button within 3.5 seconds clears NVRAM credentials and reboots into the Setup Portal.
+- **Automatic Fallback Supervisor**: Added recovery state machine that automatically resets the AP to `BW16-Repeater` on 2.4 GHz Channel 1 after 3 failed uplink connection attempts (~60 seconds).
+- **L2 Bridge DHCP Conflict Resolution**: Added `dhcps_deinit()` when bridge initializes, preventing Ameba internal DHCP server from handing out conflicting IP addresses without default gateways, restoring transparent client Internet access.
+- **Bridge Port Stability Guard**: Added port count guard (`get_bridge_portnum() < 2`) to prevent duplicate port registrations on Wi-Fi reconnect cycles.
+- **Security Hardening**:
+  - HTML entity sanitization (`esc()`) on scanned SSIDs and client MAC addresses to prevent stored XSS.
+  - Clamped HTTP header and payload sizes to 2048 bytes with HTTP 413 responses to prevent heap starvation DoS.
+  - Fixed 4-argument `WiFi.config()` call for static IP gateway and subnet assignment.
+  - Hardened Base64 and flash string buffer bounds with guaranteed null termination.
+- **Documentation & License**:
+  - Overhauled documentation in `docs/` covering architecture, L2 bridging vs NAT, macOS build, flashing, limitations, and verification test plan.
+  - Updated license copyright to `highstat`.
+
 # 0.2.0 (2026-10-31)
 
 - **Extender WiFi Settings UI**: Replaced legacy basic UI with commercial-grade setup wizard matching hardware extenders:

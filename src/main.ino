@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈ `https://github.com/highstat` 
+            `https://github.com/highstat/BW16-Repeater` 
     Name: BW16 WiFi Repeater 
     Description: High-performance L2 Transparent WiFi repeater for BW16 (RTL8720DN) 
     Author: @highstat 

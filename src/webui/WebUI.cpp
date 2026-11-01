@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈ `https://github.com/highstat` 
+            `https://github.com/highstat/BW16-Repeater` 
     Name: WebUI 
     Description: Commercial-grade Extender WiFi Settings portal & Dashboard
     Author: @highstat 
@@ -571,7 +571,7 @@ function submitConnect() {
   let apP = document.getElementById('inp-ap-pass').value;
   let targetAp = apS || (selectedSsid + '-EXT');
   let body = 'ssid=' + encodeURIComponent(selectedSsid) + '&pass=' + encodeURIComponent(pass) + '&ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP) + '&channel=' + selectedChannel;
-  document.getElementById('connect-box').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">✔ Настройки сохранены!</h3><p style="color:#4a5568;margin-top:10px;font-size:14px;">Плата перезагружается и запускает репитер...<br><br>Подключайся к сети: <strong style="color:#c29944;font-size:16px;">' + targetAp + '</strong></p></div>';
+  document.getElementById('connect-box').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">Настройки сохранены!</h3><p style="color:#4a5568;margin-top:10px;font-size:14px;">Плата перезагружается и запускает репитер...<br><br>Подключайся к сети: <strong style="color:#c29944;font-size:16px;">' + targetAp + '</strong></p></div>';
   fetch('/save_wifi', {method:'POST', body:body}).catch(e=>{});
 }
 

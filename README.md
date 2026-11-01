@@ -56,6 +56,15 @@ Because the bridge operates at layer 2:
 
 Note on channel selection: The RTL8720DN uses a single radio transceiver. The repeater AP runs on the exact same radio channel and band as the upstream router you connect to.
 
+## Documentation
+
+- [System Architecture](docs/architecture.md): Hardware, dual-core partitioning, and subsystem design.
+- [Layer 2 Bridge vs NAT](docs/bridge-vs-nat.md): Why transparent bridging is used instead of double NAT.
+- [Building on macOS](docs/build-macos.md): Setting up Arduino CLI and compiling the AmebaD core.
+- [Flashing Guide](docs/flash.md): Wiring, bootloader mode, and UART flashing instructions.
+- [Hardware Limitations](docs/limitations.md): Radio constraints, channel lock, and power requirements.
+- [Test Plan](docs/test-plan.md): Verification matrix and end-to-end testing procedures.
+
 ## Building from source
 
 ### Prerequisites

@@ -5,10 +5,10 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025 
-            ✈ `https://github.com/sprensis` 
+            `https://github.com/highstat/BW16-Repeater` 
     Name: Watchdog 
     Description: System watchdog interface 
-    Author: @sprensis 
+    Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */

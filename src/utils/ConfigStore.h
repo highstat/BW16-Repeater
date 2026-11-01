@@ -19,7 +19,7 @@
 #pragma once
 #include <Arduino.h>
 
-enum class RepeaterMode { NAT, BRIDGE };
+enum class RepeaterMode { NAT, BRIDGE, AP };
 
 struct RepeaterConfig {
   char staSsid[64];

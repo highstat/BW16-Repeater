@@ -74,7 +74,7 @@ int WifiManager::scanNetworks(ScannedNetwork results[], int maxResults) {
   }
   
   unsigned long start = millis();
-  while (!s_scanDone && (millis() - start < 4000)) {
+  while (!s_scanDone && (millis() - start < 5000)) {
     delay(100);
   }
   
@@ -90,26 +90,26 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
 
   activeChannel = c.apChannel > 0 ? c.apChannel : 1;
 
-  if (!c.staSsid[0]) {
+  // Always enable concurrent mode so STA can scan while AP runs
+  WiFi.enableConcurrent();
+
+  if (c.mode == RepeaterMode::AP) {
+    setupMode = false;
+    LedStatus::set(LedMode::BRIDGE_ACTIVE);
+    startAP(c, activeChannel);
+    lastMsg = String(F("Standalone AP active (SSID: ")) + c.apSsid + F(")");
+    if (logger) logger->info(lastMsg);
+  } else if (!c.staSsid[0]) {
     setupMode = true;
     LedStatus::set(LedMode::SETUP_PORTAL);
-    // Pure AP Mode on wlan0: default netif, robust HTTP server & DHCP
     startAP(c, activeChannel);
     lastMsg = String(F("Setup Mode active (SSID: ")) + c.apSsid + F(")");
     if (logger) logger->info(lastMsg);
   } else {
     setupMode = false;
     LedStatus::set(LedMode::CONNECTING);
-    // Concurrent STA + AP mode for active repeater
-    WiFi.enableConcurrent();
-    
-    // Start AP on the configured channel
     startAP(c, activeChannel);
-    
-    // Allow AP beacons & netif to settle cleanly before initiating STA scan
-    delay(2500);
-    
-    // Start STA connection to upstream router on the exact same channel
+    delay(1500);
     startSTA(c);
     lastMsg = String(F("Connecting to upstream: ")) + c.staSsid;
     if (logger) logger->info(lastMsg);
@@ -117,7 +117,7 @@ void WifiManager::begin(ConfigStore& cfg, Logger& log) {
 }
 
 void WifiManager::applyTxPowerBoost() {
-  if (setupMode) return; // Do not boost RF in setup portal mode
+  if (setupMode || (cfgRef && cfgRef->get().mode == RepeaterMode::AP)) return; // Do not boost RF in setup portal mode
   if (cfgRef && cfgRef->get().txPowerBoost) {
     if (wifi_is_up(RTW_STA_INTERFACE)) {
       char cmd[32];
@@ -198,7 +198,7 @@ void WifiManager::ensureReconnect() {
   if (!cfgRef) return;
   const auto& c = cfgRef->get();
 
-  if (setupMode) return;
+  if (setupMode || (cfgRef && cfgRef->get().mode == RepeaterMode::AP)) return;
 
   if (!apRunning) {
     startAP(c, activeChannel);

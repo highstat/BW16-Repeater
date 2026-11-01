@@ -135,15 +135,21 @@ void WifiManager::startSTA(const RepeaterConfig& c) {
     IPAddress mask((c.staMask >> 24) & 255, (c.staMask >> 16) & 255, (c.staMask >> 8) & 255, c.staMask & 255);
     WiFi.config(ip, gw, gw, mask);
   }
-  WiFi.begin((char*)c.staSsid, c.staPass);
+  if (c.staPass[0] && strlen(c.staPass) > 0) {
+    WiFi.begin((char*)c.staSsid, c.staPass);
+  } else {
+    WiFi.begin((char*)c.staSsid);
+  }
   lastStaTryMs = millis();
 }
 
 void WifiManager::startAP(const RepeaterConfig& c, int channel) {
-  IPAddress ip((c.apIP >> 24) & 255, (c.apIP >> 16) & 255, (c.apIP >> 8) & 255, c.apIP & 255);
-  IPAddress gw((c.apGateway >> 24) & 255, (c.apGateway >> 16) & 255, (c.apGateway >> 8) & 255, c.apGateway & 255);
-  IPAddress mask((c.apMask >> 24) & 255, (c.apMask >> 16) & 255, (c.apMask >> 8) & 255, c.apMask & 255);
-  WiFi.config(ip, ip, ip, mask);
+  if (setupMode || c.mode == RepeaterMode::AP) {
+    IPAddress ip((c.apIP >> 24) & 255, (c.apIP >> 16) & 255, (c.apIP >> 8) & 255, c.apIP & 255);
+    IPAddress gw((c.apGateway >> 24) & 255, (c.apGateway >> 16) & 255, (c.apGateway >> 8) & 255, c.apGateway & 255);
+    IPAddress mask((c.apMask >> 24) & 255, (c.apMask >> 16) & 255, (c.apMask >> 8) & 255, c.apMask & 255);
+    WiFi.config(ip, ip, ip, mask);
+  }
 
   if (channel <= 0) channel = 1;
   activeChannel = channel;
@@ -154,6 +160,11 @@ void WifiManager::startAP(const RepeaterConfig& c, int channel) {
     st = WiFi.apbegin((char*)c.apSsid, (char*)c.apPass, (char*)chStr.c_str(), 0);
   } else {
     st = WiFi.apbegin((char*)c.apSsid, (char*)chStr.c_str(), (uint8_t)0);
+  }
+
+  // In repeater mode, stop internal DHCP server so clients get IP directly from upstream router
+  if (!setupMode && c.mode == RepeaterMode::BRIDGE) {
+    dhcps_deinit();
   }
 
   apRunning = (st == WL_CONNECTED || st == 0 || st == 1);
@@ -210,30 +221,17 @@ void WifiManager::ensureReconnect() {
     lastMsg = String(F("Connected to ")) + c.staSsid + F(" (L2 Bridge Active)");
   } else {
     LedStatus::set(LedMode::CONNECTING);
-    // Non-aggressive, gentle retry every 20s so AP beacons remain stable
-    if (millis() - lastStaTryMs > 20000) {
+    // Keep retrying in background without erasing stored credentials
+    if (millis() - lastStaTryMs > 15000) {
       lastStaTryMs = millis();
       staFailCount++;
-      if (logger) logger->warn(String(F("Reconnecting STA to ")) + c.staSsid + F(" (attempt ") + String(staFailCount) + F("/3)"));
+      if (logger) logger->warn(String(F("Reconnecting STA to ")) + c.staSsid + F(" (attempt ") + String(staFailCount) + F(")"));
       
-      if (staFailCount >= 3) {
-        if (logger) logger->error(F("Cannot reach upstream router after 3 attempts. Reverting to Setup Portal (BW16-Repeater)."));
-        cfgRef->mutableRef().staSsid[0] = 0;
-        cfgRef->mutableRef().staPass[0] = 0;
-        strncpy(cfgRef->mutableRef().apSsid, "BW16-Repeater", 63);
-        cfgRef->mutableRef().apPass[0] = 0;
-        cfgRef->mutableRef().apChannel = 1;
-        cfgRef->save();
-
-        setupMode = true;
-        staFailCount = 0;
-        LedStatus::set(LedMode::SETUP_PORTAL);
-        delay(200);
-        sys_reset();
-        return;
+      if (c.staPass[0] && strlen(c.staPass) > 0) {
+        WiFi.begin((char*)c.staSsid, c.staPass);
+      } else {
+        WiFi.begin((char*)c.staSsid);
       }
-      
-      WiFi.begin((char*)c.staSsid, c.staPass);
     }
   }
 }

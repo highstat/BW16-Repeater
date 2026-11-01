@@ -33,6 +33,7 @@ extern "C" {
   extern int wext_private_command(const char *ifname, char *cmd, int show_msg);
   extern int wifi_is_up(rtw_interface_t interface);
   extern int wifi_is_connected_to_ap(void);
+  void dhcps_deinit(void);
   void sys_reset(void);
 }
 

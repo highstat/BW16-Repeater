@@ -435,6 +435,7 @@ hdr_done:
             "<div id='scan-status' style='display:none;' class='dots-loader'><div class='dot'></div><div class='dot'></div><div class='dot'></div><div class='dot'></div></div>"
             "<div id='network-list' style='max-height:220px;overflow-y:auto;border:1px solid #edf2f7;border-radius:6px;margin-bottom:16px;'></div>"
             "<div id='rep-form'>"
+            "<div id='form-err' style='color:#c53030;font-size:12px;margin-bottom:12px;display:none;background:#fff5f5;padding:8px 12px;border-radius:6px;border:1px solid #feb2b2;'></div>"
             "<div class='input-group'>"
             "<label>Home Wi-Fi Network (SSID):</label>"
             "<input type='text' id='inp-sta-ssid' placeholder='Click a network above or type manually'>"
@@ -454,13 +455,32 @@ hdr_done:
             "<div class='input-group'>"
             "<label>Radio Channel:</label>"
             "<select id='sel-channel'>"
-            "<option value='1'>Auto / Same as router (Channel 1)</option>"
+            "<option value='1'>2.4 GHz - Channel 1</option>"
+            "<option value='2'>2.4 GHz - Channel 2</option>"
+            "<option value='3'>2.4 GHz - Channel 3</option>"
+            "<option value='4'>2.4 GHz - Channel 4</option>"
+            "<option value='5'>2.4 GHz - Channel 5</option>"
             "<option value='6'>2.4 GHz - Channel 6</option>"
+            "<option value='7'>2.4 GHz - Channel 7</option>"
+            "<option value='8'>2.4 GHz - Channel 8</option>"
+            "<option value='9'>2.4 GHz - Channel 9</option>"
+            "<option value='10'>2.4 GHz - Channel 10</option>"
             "<option value='11'>2.4 GHz - Channel 11</option>"
+            "<option value='12'>2.4 GHz - Channel 12</option>"
+            "<option value='13'>2.4 GHz - Channel 13</option>"
             "<option value='36'>5 GHz - Channel 36</option>"
             "<option value='40'>5 GHz - Channel 40</option>"
             "<option value='44'>5 GHz - Channel 44</option>"
             "<option value='48'>5 GHz - Channel 48</option>"
+            "<option value='52'>5 GHz - Channel 52</option>"
+            "<option value='56'>5 GHz - Channel 56</option>"
+            "<option value='60'>5 GHz - Channel 60</option>"
+            "<option value='64'>5 GHz - Channel 64</option>"
+            "<option value='149'>5 GHz - Channel 149</option>"
+            "<option value='153'>5 GHz - Channel 153</option>"
+            "<option value='157'>5 GHz - Channel 157</option>"
+            "<option value='161'>5 GHz - Channel 161</option>"
+            "<option value='165'>5 GHz - Channel 165</option>"
             "</select>"
             "</div>"
             "<button class='btn-gold' style='width:100%;padding:12px;margin-top:6px;' onclick='submitRepeater()'>Connect & Amplify</button>"
@@ -489,6 +509,9 @@ hdr_done:
             "<option value='40'>5 GHz - Channel 40</option>"
             "<option value='44'>5 GHz - Channel 44</option>"
             "<option value='48'>5 GHz - Channel 48</option>"
+            "<option value='149'>5 GHz - Channel 149</option>"
+            "<option value='153'>5 GHz - Channel 153</option>"
+            "<option value='157'>5 GHz - Channel 157</option>"
             "</select>"
             "</div>"
             "<button class='btn-gold' style='width:100%;padding:12px;margin-top:6px;' onclick='submitApMode()'>Start Access Point</button>"
@@ -630,11 +653,25 @@ function pickNet(s, ch) {
   document.getElementById('inp-sta-ssid').value = s;
   document.getElementById('inp-ap-ssid').value = s + '-EXT';
   let sel = document.getElementById('sel-channel');
-  if (sel) sel.value = String(ch || 1);
+  if (sel) {
+    let found = false;
+    for (let i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value == String(ch)) { found = true; break; }
+    }
+    if (!found) {
+      let opt = document.createElement('option');
+      opt.value = String(ch);
+      opt.innerText = (ch > 14 ? '5 GHz - Channel ' : '2.4 GHz - Channel ') + ch;
+      sel.appendChild(opt);
+    }
+    sel.value = String(ch || 1);
+  }
   document.getElementById('inp-sta-pass').focus();
 }
 
 function submitRepeater() {
+  let err = document.getElementById('form-err');
+  if (err) { err.style.display = 'none'; err.innerText = ''; }
   let s = document.getElementById('inp-sta-ssid').value.trim();
   let p = document.getElementById('inp-sta-pass').value;
   let apS = document.getElementById('inp-ap-ssid').value.trim();
@@ -642,14 +679,25 @@ function submitRepeater() {
   let ch = document.getElementById('sel-channel').value;
 
   if (!s) {
+    if (err) { err.innerText = 'Please select or enter home Wi-Fi network'; err.style.display = 'block'; }
     document.getElementById('inp-sta-ssid').focus();
+    return;
+  }
+  if (p && p.length < 8) {
+    if (err) { err.innerText = 'Home Wi-Fi password must be at least 8 characters (or empty for open network)'; err.style.display = 'block'; }
+    document.getElementById('inp-sta-pass').focus();
+    return;
+  }
+  if (apP && apP.length < 8) {
+    if (err) { err.innerText = 'Repeater password must be at least 8 characters (or empty to use home password)'; err.style.display = 'block'; }
+    document.getElementById('inp-ap-pass').focus();
     return;
   }
 
   let targetAp = apS || (s + '-EXT');
   document.getElementById('rep-form').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">Settings Applied</h3><p style="color:#4a5568;margin-top:10px;font-size:13px;">Repeater is connecting to home router and restarting...<br><br>Connect your devices to: <strong style="color:#be8d36;font-size:15px;">' + esc(targetAp) + '</strong></p></div>';
 
-  let body = 'ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p) + '&ap_ssid=' + encodeURIComponent(apS) + '&ap_pass=' + encodeURIComponent(apP) + '&channel=' + encodeURIComponent(ch);
+  let body = 'ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p) + '&ap_ssid=' + encodeURIComponent(targetAp) + '&ap_pass=' + encodeURIComponent(apP) + '&channel=' + encodeURIComponent(ch);
   fetch('/save_wifi', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -661,6 +709,20 @@ function submitApMode() {
   let apS = document.getElementById('inp-hotspot-ssid').value.trim() || 'BW16-Hotspot';
   let apP = document.getElementById('inp-hotspot-pass').value;
   let ch = document.getElementById('sel-hotspot-channel').value;
+
+  if (apP && apP.length < 8) {
+    let err = document.getElementById('hotspot-err');
+    if (!err) {
+      err = document.createElement('div');
+      err.id = 'hotspot-err';
+      err.style = 'color:#c53030;font-size:12px;margin-bottom:12px;background:#fff5f5;padding:8px 12px;border-radius:6px;border:1px solid #feb2b2;';
+      document.getElementById('view-ap').insertBefore(err, document.getElementById('view-ap').firstChild);
+    }
+    err.innerText = 'Hotspot password must be at least 8 characters (or empty for open network)';
+    err.style.display = 'block';
+    document.getElementById('inp-hotspot-pass').focus();
+    return;
+  }
 
   document.getElementById('view-ap').innerHTML = '<div style="text-align:center;padding:24px;"><h3 style="color:#2b220e;">Access Point Started</h3><p style="color:#4a5568;margin-top:10px;font-size:13px;">Board is rebooting into Standalone Access Point mode...<br><br>Connect your devices to: <strong style="color:#be8d36;font-size:15px;">' + esc(apS) + '</strong></p></div>';
 

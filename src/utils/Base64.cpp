@@ -4,17 +4,33 @@
         \__ \ |_) | | |  __/ | | \__ \ \__ \ 
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
-                © Copyright 2025 
-            ✈ `https://github.com/sprensis` 
+                © Copyright 2025-2026 
+            ✈ `https://github.com/highstat` 
     Name: Base64 
-    Description: Base64 encoding helper 
-    Author: @sprensis 
+    Description: Clean, safe Base64 encoding helper 
+    Author: @highstat 
     Platform: BW16 (RTL8720dn) - Ameba Arduino 
     License: MIT 
 */
 
 #include "Base64.h"
 
-static const char* T="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-String b64(const String& in){
-  String out=""; int val=0, valb=-6; for (size_t i=0;i<in.length();i++){ unsigned char c=in[i]; val=(val<<8)+c; valb+=8; while(valb>=0){ out+=T[(val>>valb)&0x3F]; valb-=6; } } if(valb>-6) out+=T[((val<<8)>>(valb+8))&0x3F]; while(out.length()%4) out+='='; return out; }
+String b64(const String& in) {
+  static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  String out = "";
+  size_t len = in.length();
+  if (len == 0) return out;
+  out.reserve(((len + 2) / 3) * 4);
+  size_t i = 0;
+  while (i < len) {
+    uint32_t b0 = (uint8_t)in[i++];
+    uint32_t b1 = (i < len) ? (uint8_t)in[i++] : 0;
+    uint32_t b2 = (i < len) ? (uint8_t)in[i++] : 0;
+    uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
+    out += T[(triple >> 18) & 0x3F];
+    out += T[(triple >> 12) & 0x3F];
+    out += (i > len + 1) ? '=' : T[(triple >> 6) & 0x3F];
+    out += (i > len) ? '=' : T[triple & 0x3F];
+  }
+  return out;
+}

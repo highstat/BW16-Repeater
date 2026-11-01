@@ -15,7 +15,6 @@
 
 #pragma once
 #include <Arduino.h>
-#include <WiFiUdp.h>
 #include "../utils/ConfigStore.h"
 #include "../logger/Logger.h"
 
@@ -27,8 +26,6 @@ class DhcpServer {
   bool isDnsCaptiveEnabled() const { return dnsEnabled; }
 
  private:
-  void handleDns();
-  WiFiUDP dns;
   ConfigStore* store = nullptr;
   Logger* logger = nullptr;
   bool dnsEnabled = true;

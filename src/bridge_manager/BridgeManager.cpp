@@ -33,9 +33,11 @@ bool BridgeManager::enableBridge() {
   uint8_t mac[6] = {0};
   WiFi.macAddress(mac);
 
-  bridgeif_set_mac_init((char*)mac);
-  bridgeif_add_port_sta_netif();
-  bridgeif_add_port_ap_netif();
+  if (get_bridge_portnum() < 2) {
+    bridgeif_set_mac_init((char*)mac);
+    bridgeif_add_port_sta_netif();
+    bridgeif_add_port_ap_netif();
+  }
 
   // Stop internal AP DHCP server so upstream router provides IP and DNS directly to clients
   dhcps_deinit();

@@ -5,7 +5,7 @@
         |___/ .__/|_|  \___|_| |_|___/_|___/ 
             |_|                             
                 © Copyright 2025-2026 
-            ✈  
+            ✈ `https://github.com/highstat` 
     Name: DhcpServer 
     Description: Captive Portal DNS controller for setup mode 
     Author: @highstat 
@@ -23,7 +23,4 @@ void DhcpServer::begin(ConfigStore& cfg, Logger& log) {
 }
 
 void DhcpServer::loop() {
-}
-
-void DhcpServer::handleDns() {
 }

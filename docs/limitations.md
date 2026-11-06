@@ -33,6 +33,12 @@ Single-radio repeating uses time-division multiplexing:
 - Packets received from repeated clients on the AP interface must be buffered and retransmitted on the STA interface over the same frequency.
 - The maximum effective throughput is approximately half of the raw point-to-point Wi-Fi link rate under equivalent signal conditions.
 
+### Known throughput issue
+
+Measured throughput can be substantially lower than the expected single-radio reduction. In one 2.4 GHz test, a phone achieved approximately 8 Mbps download and 10 Mbps upload through the repeater, compared with 37 Mbps download and 41 Mbps upload directly. These are observations from one setup, not guaranteed performance figures.
+
+The WLAN driver reported buffer allocation failures during traffic; failed transmissions can drop forwarded frames. Increasing the packet buffer pool alone did not improve that test. The complete cause and an effective fix remain under investigation.
+
 ## Layer 2 frame handling (802.11 3-address limitation)
 
 Standard IEEE 802.11 client associations use 3-address MAC headers (Source, Destination, BSSID). Unlike 802.11s mesh or 4-address WDS links:

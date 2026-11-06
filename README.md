@@ -4,7 +4,9 @@
   <img alt="BW16 Architecture" width="800" src="img/architecture.png">
 </p>
 
-A transparent layer 2 Wi-Fi repeater for the Ai-Thinker BW16 board (Realtek RTL8720DN). It connects to an existing 2.4 GHz or 5 GHz network and rebroadcasts it without double NAT or subnet isolation. Connected devices receive IP addresses directly from your main router.
+A Wi-Fi repeater for the Ai-Thinker BW16 (Realtek RTL8720DN), using Realtek's L2 bridge and MAC translation. Clients receive their network configuration from the upstream router through a DHCP relay.
+
+> **Known issue: low throughput.** In one 2.4 GHz test, the repeater achieved about 8 Mbps download and 10 Mbps upload, versus 37/41 Mbps directly. Results depend on the environment. WLAN buffer exhaustion and dropped frames were observed; the full cause is still under investigation.
 
 ## Hardware
 
@@ -23,16 +25,13 @@ A transparent layer 2 Wi-Fi repeater for the Ai-Thinker BW16 board (Realtek RTL8
 
 ## How to return to setup
 
-If you entered the wrong password, move the repeater out of router range, or need to reconfigure it, use any of these methods:
-
-### Double-tap reset button
-Press the physical RST button on the board twice within three seconds. The repeater erases stored Wi-Fi credentials and restarts into setup mode with the `BW16-Repeater` network.
+If the router is unavailable, connect to the repeater's network and open `http://192.168.4.1` to access its local interface.
 
 ### Automatic fallback
-If the repeater cannot reach the configured router after three attempts (around 60 seconds), it automatically clears invalid credentials and returns to setup mode.
+If the upstream connection fails, the repeater keeps its settings, retries in the background, and provides local DHCP for access to the device.
 
 ### Web interface
-On `http://192.168.4.1`, open the dashboard and click Reset to Setup Portal.
+Open the device's web interface using its current IP address, then select Reset to Setup Portal.
 
 ### Serial console
 Connect via serial monitor at 115200 baud and send the command `reset`.
@@ -51,8 +50,7 @@ The firmware enables concurrent station and access point mode on the RTL8720DN r
 
 Because the bridge operates at layer 2:
 - Clients get their IP, default gateway, and DNS servers straight from your main router.
-- Local network devices, printers, Home Assistant, and IP cameras remain visible across both networks.
-- UPnP, mDNS, and broadcast discovery work without configuration.
+- Local network reachability and discovery depend on the router and its handling of broadcast and multicast traffic.
 
 ### Channel Selection & 5 GHz Bands
 The RTL8720DN uses a single radio transceiver:
@@ -112,7 +110,7 @@ To flash the board over USB:
 python3 do_flash.py
 ```
 
-The script detects the serial port, uploads the image at 1.5 Mbaud, and resets the board.
+The script detects the serial port, uploads the image, and resets the board. Its default upload rate is 921600 baud on macOS and 1.5 Mbaud elsewhere.
 
 ## License
 

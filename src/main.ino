@@ -38,6 +38,7 @@ extern "C" {
 #include "utils/Watchdog.h"
 #include "utils/LedStatus.h"
 #include "utils/Utils.h"
+#include "utils/NetDiagnostics.h"
 
 ConfigStore configStore;
 Logger logger;
@@ -47,6 +48,7 @@ DhcpServer dhcp;
 BleConfig ble;
 WebUI webui;
 Watchdog wdt;
+bool netDiagnosticMode = false;
 
 void setup() {
   Serial.begin(115200);
@@ -54,39 +56,29 @@ void setup() {
   logger.begin();
   configStore.begin();
   configStore.load();
+  LedStatus::setConfig(configStore.get().ledMode);
   wdt.begin();
 
-  // Double Reset Detection (DRD)
-  uint32_t rstVal = BKUP_Read(3); // BKUP_REG3
-  if (rstVal == DRD_MAGIC) {
-    BKUP_Write(3, 0);
-    logger.warn(F("[DRD] Physical double-reset detected! Clearing config to Setup Portal..."));
-    configStore.mutableRef().staSsid[0] = 0;
-    configStore.mutableRef().staPass[0] = 0;
-    strncpy(configStore.mutableRef().apSsid, "BW16-Repeater", 63);
-    configStore.mutableRef().apPass[0] = 0;
-    configStore.mutableRef().apChannel = 1;
-    configStore.save();
-    for (int i = 0; i < 6; i++) {
-      LedStatus::set(LedMode::SETUP_PORTAL);
-      delay(80);
-      LedStatus::set(LedMode::ALL_OFF);
-      delay(80);
-    }
-  } else {
-    BKUP_Write(3, DRD_MAGIC);
-  }
+  // Clear backup register to avoid accidental double-reset wipes
+  BKUP_Write(3, 0);
+
+  netDiagnosticMode = beginNetDiagnostics(configStore.get());
+  if (netDiagnosticMode) return;
 
   logger.info(F("[INIT] Starting BW16 Repeater..."));
   ble.begin(configStore, logger);
-  wifi.begin(configStore, logger);
-  dhcp.begin(configStore, logger);
   bridge.begin(configStore, logger, wifi);
+  wifi.begin(configStore, logger, bridge);
+  dhcp.begin(configStore, logger);
   webui.begin(configStore, logger, wifi, bridge, dhcp);
   logger.info(F("[INIT] All subsystems initialized successfully!"));
 }
 
 void loop() {
+  if (netDiagnosticMode) {
+    loopNetDiagnostics();
+    return;
+  }
   LedStatus::tick();
   ble.loop();
   webui.loop();
@@ -118,7 +110,19 @@ void loop() {
     if (ch == '\n' || ch == '\r') {
       if (ln.length() > 0) {
         ln.trim();
-        if (ln.startsWith("set_sta ")) {
+        if (ln.startsWith("set_sta_ssid ")) {
+          String ssid = ln.substring(13);
+          ssid.trim();
+          if (ssid.length() > 0 && ssid.length() <= 63) {
+            strncpy(configStore.mutableRef().staSsid, ssid.c_str(), 63);
+            configStore.mutableRef().staSsid[63] = 0;
+            configStore.save();
+            wifi.restartSTA();
+            Serial.println("OK: STA SSID updated; password preserved");
+          } else {
+            Serial.println("ERROR: STA SSID must contain 1-63 characters");
+          }
+        } else if (ln.startsWith("set_sta ")) {
           int sp = ln.indexOf(' ', 8);
           String ssid = ln.substring(8, sp > 0 ? sp : ln.length());
           String pass = "";
@@ -142,14 +146,24 @@ void loop() {
           strncpy(configStore.mutableRef().apPass, pass.c_str(), 63);
           configStore.mutableRef().apPass[63] = 0;
           configStore.mutableRef().apChannel = (uint8_t)ch;
-          configStore.save();
+          if (!configStore.save()) {
+            Serial.println("ERROR: AP configuration flash verification failed");
+            ln = "";
+            continue;
+          }
+          Serial.println("OK: AP config stored and verified; rebooting");
+          Serial.flush();
+          delay(100);
           wifi.restartAP();
-          Serial.println("OK: AP config updated");
         } else if (ln == "status" || ln == "show") {
-          Serial.println(String("STA SSID: ") + configStore.get().staSsid + " (Connected: " + (wifi.staConnected() ? "YES" : "NO") + ")");
+          Serial.println(String("STA SSID: ") + configStore.get().staSsid + " (Associated: " + (wifi.staAssociated() ? "YES" : "NO") + ", Online: " + (wifi.staConnected() ? "YES" : "NO") + ")");
+          Serial.println(String("Bridge IP: ") + ipToStr(wifi.bridgeIP()));
           Serial.println(String("STA IP: ") + ipToStr(wifi.staIP()));
+          Serial.println(String("AP IP: ") + ipToStr(wifi.apIP()));
           Serial.println(String("AP SSID: ") + configStore.get().apSsid + " Channel: " + String(wifi.getActiveChannel()));
-          Serial.println(String("L2 Bridge: ") + (bridge.isBridgeActive() ? "ACTIVE" : "INACTIVE"));
+          Serial.println(String("L2 Bridge: ") + (bridge.isBridgeActive() ? "ACTIVE" : "STANDBY"));
+        } else if (ln == "audit_ap") {
+          wifi.auditAP();
         } else if (ln == "scan") {
           Serial.println("Scanning Wi-Fi networks...");
           ScannedNetwork nets[32];
@@ -158,6 +172,34 @@ void loop() {
           for (int i = 0; i < n; i++) {
             Serial.println(String("  [") + (nets[i].channel > 14 ? "5G" : "2.4G") + " Ch " + nets[i].channel + "] " + nets[i].ssid + " (" + nets[i].rssi + " dBm)");
           }
+        } else if (ln.startsWith("led")) {
+          String arg = ln.substring(3);
+          arg.trim();
+          arg.toLowerCase();
+          uint8_t m = 0;
+          if (arg == "off" || arg == "disable" || arg == "0") m = 1;
+          else if (arg == "green" || arg == "2") m = 2;
+          else if (arg == "blue" || arg == "3") m = 3;
+          else if (arg == "red" || arg == "4") m = 4;
+          else if (arg == "cyan" || arg == "5") m = 5;
+          else if (arg == "magenta" || arg == "6") m = 6;
+          else if (arg == "yellow" || arg == "7") m = 7;
+          else if (arg == "white" || arg == "8") m = 8;
+          else m = 0; // auto
+          configStore.mutableRef().ledMode = m;
+          configStore.save();
+          LedStatus::setConfig(m);
+          Serial.println(String("OK: LED set to ") + (m == 0 ? "auto" : (m == 1 ? "off" : arg)));
+        } else if (ln == "help" || ln == "?") {
+          Serial.println("Commands:");
+          Serial.println("  status       - Show system status and IPs");
+          Serial.println("  scan         - Scan 2.4G & 5G Wi-Fi networks");
+          Serial.println("  set_sta_ssid <ssid> - Change SSID and preserve stored password");
+          Serial.println("  set_sta <ssid> [pass] - Set home Wi-Fi credentials");
+          Serial.println("  set_ap <ssid> [pass] [ch] - Set repeater AP credentials");
+          Serial.println("  led <auto|off|green|blue|red|cyan|magenta|yellow|white> - Set LED mode");
+          Serial.println("  reset        - Reset to Setup Portal");
+          Serial.println("  reboot       - Reboot board");
         } else if (ln == "reset" || ln == "factory") {
           Serial.println("Factory reset: resetting to Setup Portal...");
           configStore.mutableRef().staSsid[0] = 0;

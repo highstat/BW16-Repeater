@@ -42,9 +42,9 @@ arduino-cli board listall | grep -i AmebaD
 
 You should see `realtek:AmebaD:Ai-Thinker_BW16`.
 
-## Enabling repeater mode in AmebaD SDK
+## Repeater-aware AmebaD core
 
-The AmebaD LwIP stack includes native IEEE 802.1D bridging, but it must be enabled in the SDK headers:
+The AmebaD LwIP stack includes native IEEE 802.1D bridging. The prebuilt common library shipped with core 3.1.9 does not contain the matching three-interface ABI, so changing only the SDK header is not sufficient.
 
 1. Locate `platform_opts.h` in your local AmebaD package:
    ```bash
@@ -58,7 +58,7 @@ The AmebaD LwIP stack includes native IEEE 802.1D bridging, but it must be enabl
    #define CONFIG_EXAMPLE_WLAN_REPEATER 1
    ```
 
-Note: The included build script `scripts/build.sh` automatically patches this file if needed.
+The included build script patches this option and uses `scripts/build_bridge_core.py` to compile a network archive from the installed 3.1.9 sources. The vendor WLAN library requires a 196-byte `netif`: the build keeps this layout and stores bridge port ownership in a separate table instead of enlarging `client_data`. Compile-time checks verify the size and the driver-used state/MAC offsets. The linked `xnetif` symbol must be exactly `0x24c` bytes (three interfaces). Use the build script rather than a bare `arduino-cli compile` for release firmware.
 
 ## Compiling the firmware
 
@@ -68,14 +68,8 @@ Run the automated build script:
 bash scripts/build.sh
 ```
 
-Or compile manually using `arduino-cli`:
-
-```bash
-arduino-cli compile --fqbn realtek:AmebaD:Ai-Thinker_BW16 ./
-```
-
 After compilation, the combined firmware binary is placed in:
-- `build/BW16-Repeater.ino.bin`
+- `build/BW16-Repeater.bin`
 - `bin/bw16_repeater_firmware.bin`
 
 ## Troubleshooting build issues

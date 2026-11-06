@@ -48,9 +48,11 @@ struct ScannedNetwork {
   uint8_t enc;
 };
 
+class BridgeManager;
+
 class WifiManager {
  public:
-  void begin(ConfigStore& cfg, Logger& log);
+  void begin(ConfigStore& cfg, Logger& log, BridgeManager& bridge);
   void loop();
   bool staAssociated() const;
   bool staConnected() const;
@@ -61,12 +63,18 @@ class WifiManager {
   int getRouterRssi();
   bool isSetupMode() const { return setupMode; }
   void restartAP();
+  bool auditAP();
   void restartSTA();
   String lastStatusMsg() const { return lastMsg; }
   void applyTxPowerBoost();
   int getAssociatedClients(ConnectedClient clients[], int maxClients);
   void kickClient(const char* macStr);
+  void kickAllClients();
   int scanNetworks(ScannedNetwork results[], int maxResults);
+  bool triggerScan();
+  bool isScanning() const;
+  int getCachedScanResults(ScannedNetwork results[], int maxResults);
+  int getCachedCount() const;
 
  private:
   void startSTA(const RepeaterConfig& c);
@@ -77,6 +85,7 @@ class WifiManager {
 
   Logger* logger = nullptr;
   ConfigStore* cfgRef = nullptr;
+  BridgeManager* bridgeRef = nullptr;
   unsigned long lastCheck = 0;
   unsigned long lastStaTryMs = 0;
   unsigned long lastKickCheck = 0;

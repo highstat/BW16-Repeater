@@ -9,6 +9,39 @@ import time
 import glob
 import argparse
 import subprocess
+import re
+import atexit
+import hashlib
+import shutil
+import tempfile
+from pathlib import Path
+
+_SECRET_LINE = re.compile(r"(?i)(?:pass(?:word|phrase)?|psk|credential|secret|(?:sta|ap)_pass)\s*[:=]")
+
+def print_sanitized_line(line):
+    if _SECRET_LINE.search(line):
+        print("[REDACTED password-like line]", flush=True)
+    else:
+        print(line, end="", flush=True)
+
+def serial_line_sink():
+    pending = bytearray()
+
+    def feed(data, final=False):
+        pending.extend(data)
+        while True:
+            try:
+                end = pending.index(b"\n") + 1
+            except ValueError:
+                break
+            line = bytes(pending[:end]).decode("utf-8", errors="replace")
+            del pending[:end]
+            print_sanitized_line(line)
+        if final and pending:
+            print_sanitized_line(bytes(pending).decode("utf-8", errors="replace"))
+            pending.clear()
+
+    return feed
 
 def get_arduino_roots():
     roots = []
@@ -126,12 +159,14 @@ def reset_and_monitor(port, duration=5.0):
         time.sleep(0.15)
         ser.rts = False
         print("Board reset. Starting serial log monitor (5s):")
+        sink = serial_line_sink()
         t0 = time.time()
         while time.time() - t0 < duration:
             data = ser.read(512)
             if data:
-                print(data.decode("utf-8", errors="replace"), end="", flush=True)
+                sink(data)
             time.sleep(0.02)
+        sink(b"", final=True)
         ser.close()
         return True
     except Exception:
@@ -157,15 +192,17 @@ def reset_and_monitor(port, duration=5.0):
             time.sleep(0.15)
             fcntl.ioctl(fd, TIOCMBIC, struct.pack("I", TIOCM_RTS))
             print("Board reset. Starting serial log monitor (5s):")
+            sink = serial_line_sink()
             t0 = time.time()
             while time.time() - t0 < duration:
                 try:
                     d = os.read(fd, 512)
                     if d:
-                        print(d.decode("utf-8", errors="replace"), end="", flush=True)
+                        sink(d)
                 except BlockingIOError:
                     pass
                 time.sleep(0.02)
+            sink(b"", final=True)
             os.close(fd)
             return True
         except Exception as e:
@@ -176,9 +213,13 @@ def reset_and_monitor(port, duration=5.0):
 def main():
     parser = argparse.ArgumentParser(description="BW16 Wi-Fi Repeater Firmware Flasher (Cross-Platform)")
     parser.add_argument("-p", "--port", help="Serial port (e.g. COM3, /dev/ttyUSB0, /dev/cu.usbserial-10)")
-    parser.add_argument("-b", "--baud", default="1500000", help="Flashing baud rate (default: 1500000)")
+    default_baud = "921600" if sys.platform == "darwin" else "1500000"
+    parser.add_argument("-b", "--baud", default=default_baud, help=f"Flashing baud rate (default: {default_baud})")
     parser.add_argument("--tool-dir", help="Explicit path to ameba_d_tools directory")
-    parser.add_argument("--attempts", type=int, default=20, help="Number of download mode attempts (default: 20)")
+    parser.add_argument("--attempts", type=int, default=30, help="Number of download mode attempts (default: 30)")
+    parser.add_argument("--firmware", type=Path,
+                        default=Path(__file__).resolve().parent / "bin/bw16_repeater_firmware.bin",
+                        help="Exact firmware image to upload (default: repository bin image)")
     args = parser.parse_args()
 
     tool, tool_dir = find_tool(args.tool_dir)
@@ -187,17 +228,33 @@ def main():
         print("Please ensure the Realtek AmebaD Arduino core is installed or specify --tool-dir.")
         sys.exit(1)
 
+    if not args.firmware.is_file() or args.firmware.stat().st_size == 0:
+        print("Error: firmware image is missing or empty.")
+        sys.exit(1)
+    # The vendor uploader reads its tools directory, not the repository bin.
+    # Stage a private copy so another build cannot replace the image mid-upload.
+    staging = tempfile.TemporaryDirectory(prefix="bw16-flash-")
+    atexit.register(staging.cleanup)
+    staged_tools = Path(staging.name) / "tools"
+    shutil.copytree(tool_dir, staged_tools)
+    shutil.copyfile(args.firmware, staged_tools / "km0_km4_image2.bin")
+    tool_dir = str(staged_tools)
+    firmware_hash = hashlib.sha256((staged_tools / "km0_km4_image2.bin").read_bytes()).hexdigest()
+
     port = args.port or find_port()
+    current_baud = str(args.baud)
 
     print("=" * 60)
     print("BW16 REPEATER: FLASHER (CROSS-PLATFORM)")
     print(f"OS: {sys.platform}")
     print(f"Upload Tool: {tool}")
     print(f"Target Serial Port: {port}")
-    print(f"Baud Rate: {args.baud}")
-    print("1. Hold the BURN button.")
-    print("2. Press and release the RST button.")
-    print("3. Release the BURN button.")
+    print(f"Baud Rate: {current_baud}")
+    print(f"Firmware SHA256: {firmware_hash}")
+    print("Instructions to enter Download Mode:")
+    print("  1. Press and hold the BURN button.")
+    print("  2. Press and release the RST button.")
+    print("  3. Release the BURN button (do not hold it during upload).")
     print("=" * 60)
 
     for attempt in range(1, args.attempts + 1):
@@ -210,16 +267,19 @@ def main():
             time.sleep(1)
             continue
 
-        print(f"\n--- [Attempt {attempt}/{args.attempts}] Starting bootloader... ---")
-        cmd = [tool, tool_dir, port, "{board}", "Disable", "Disable", str(args.baud)]
+        print(f"\n--- [Attempt {attempt}/{args.attempts}] (Baud: {current_baud}) Starting bootloader... ---")
+        cmd = [tool, tool_dir, port, "{board}", "Disable", "Disable", current_baud]
         
+        transfer_failed = False
+        success = False
         try:
             p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            success = False
             for line in iter(p.stdout.readline, ""):
-                print(line, end="", flush=True)
+                print_sanitized_line(line)
                 if "All images are sent successfully" in line:
                     success = True
+                if "Download fail" in line or "checksum error" in line:
+                    transfer_failed = True
             p.wait()
         except Exception as e:
             print(f"Execution error on attempt {attempt}: {e}")
@@ -228,11 +288,21 @@ def main():
 
         if success:
             print("\n" + "=" * 60)
-            print("Firmware flashed successfully.")
+            print("Firmware flashed successfully!")
             print("=" * 60)
             time.sleep(0.5)
             reset_and_monitor(port, duration=5.0)
             sys.exit(0)
+        elif transfer_failed:
+            print(f"\n[!] Transfer started but failed midway (CRC checksum/baud error).")
+            # Automatically try a lower baud rate if we were at 1500000 or 921600
+            if current_baud == "1500000":
+                current_baud = "921600"
+                print(f"[>] Auto-switching baud rate down to {current_baud} for next attempt.")
+            elif current_baud == "921600":
+                current_baud = "115200"
+                print(f"[>] Auto-switching baud rate down to {current_baud} for next attempt.")
+            time.sleep(1)
         else:
             print(f"Attempt {attempt} did not catch download mode. Retrying...")
             time.sleep(1)

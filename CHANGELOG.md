@@ -1,3 +1,25 @@
+# 0.2.2 (2026-11-01)
+
+- **Asynchronous Non-Blocking Repeater Startup**:
+  - SoftAP (`<SSID>-EXT`) and local DHCP server now start immediately on boot in 200 ms without hanging inside `setup()`.
+  - Upstream STA connection runs asynchronously in the background. The setup portal and web dashboard are always instantly accessible at `192.168.4.1`.
+- **L2 Bridge Deferred Port Registration**:
+  - Ports are attached to `bridgeif` before the station starts DHCP; setup mode uses the AP netif directly without bridge ports.
+  - Clears the AP port's local address while bridging, so the WLAN driver's IP filter accepts forwarded unicast traffic.
+  - Relays client DHCP exchanges to the upstream router and restores local DHCP when upstream connectivity is lost.
+- **Proactive Background Wi-Fi Scanner & Cache**:
+  - Implemented background scanning on boot; cached network records allow `GET /scan_json` to respond in 1 ms with zero web server blocking.
+  - Added polling state (`scanning: true/false`) and manual force refresh (`/scan_json?refresh=1`).
+- **Web UI Form & Selection Hardening**:
+  - Fixed JavaScript `SyntaxError` in `pickNet()` caused by inline unescaped quotes in `onclick`. Switched to HTML5 `data-ssid` and `data-ch` attributes.
+  - Added band filter buttons (`All`, `2.4 GHz Only`, `5 GHz Only`) and channel badges (`Ch X (2.4 GHz / 5 GHz)`).
+  - Added automatic channel synchronization when selecting any network.
+- **Configurable RGB LED Modes**:
+  - Added `ledMode` config (Auto telemetry, Complete Dark/Off, and 7 static colors: Green, Blue, Red, Cyan, Magenta, Yellow, White).
+  - Added live `POST /set_led` endpoint and UART serial console command `led <mode>`.
+- **5 GHz Channel Documentation**:
+  - Clarified UNII-1 (Channels 36–48) full support vs. DFS (52–144) SoftAP restrictions and UNII-3 (149–165) driver limits in `docs/limitations.md`.
+
 # 0.2.1 (2026-11-01)
 
 - **Double-Reset Recovery (DRD)**: Implemented hardware reset detection via AmebaD RTC backup register `BKUP_REG3`. Double-pressing the physical RST button within 3.5 seconds clears NVRAM credentials and reboots into the Setup Portal.

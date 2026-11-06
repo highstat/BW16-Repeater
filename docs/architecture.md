@@ -35,33 +35,35 @@ This document provides a technical overview of the BW16 Wi-Fi Repeater firmware 
 ### 1. Wi-Fi Manager (`src/wifi_manager/`)
 Manages radio state transitions, channel synchronization, scanning, and station reconnects:
 - **Concurrent STA+AP mode**: Configures `wlan0` as 802.11 station and `wlan1` as 802.11 access point.
-- **Channel synchronization**: Automatically queries upstream BSSID channel and configures the AP interface on the identical frequency synthesizer channel.
-- **Auto-fallback supervisor**: Tracks consecutive association failures. If 3 consecutive connection attempts fail (~60s), clears stored credentials and resets AP to `BW16-Repeater` on 2.4 GHz Channel 1.
+- **Non-blocking Startup**: Starts the AP interface and local DHCP server immediately on boot. Upstream STA connections run asynchronously in the background so the setup portal and AP are always immediately responsive.
+- **Background Scan Cache**: Proactively scans all 2.4 GHz and 5 GHz channels on startup and caches AP records. The `/scan_json` endpoint returns in 1 ms without blocking the web server or dropping client connections.
+- **Channel synchronization**: Automatically locks the AP interface to the exact channel of the selected upstream network. Warns against unsupported DFS / high 5 GHz channels (> 48).
 
 ### 2. Bridge Manager (`src/bridge_manager/`)
 Controls the L2 packet bridge using AmebaD LwIP `bridgeif`:
-- Attaches `wlan0` and `wlan1` netifs to the bridge switch.
-- Guards against duplicate port registrations on link flaps.
-- Deinitializes the SoftAP DHCP server (`dhcps_deinit()`) once the bridge forms to prevent gateway conflicts.
+- **Ordered Port Registration**: Moves the AP to the upstream channel first, then attaches `wlan0` (STA) and `wlan1` (AP) to `bridgeif` before starting the STA DHCP client. This preserves the AP netif input callback while satisfying AmebaD's requirement that both bridge ports exist before DHCP can request an address for `bridgeif`.
+- **Bridge-aware Core Override**: The build compiles the related LwIP/network objects together with `CONFIG_EXAMPLE_WLAN_REPEATER=1`. It preserves the vendor 196-byte `netif` layout for the closed WLAN library, provides three `xnetif` entries, and stores bridge port ownership outside `netif.client_data`.
+- **Dynamic DHCP Handoff**: Stops the local SoftAP DHCP server before registering bridge ports. When the bridge activates, a DHCP relay forwards client requests to the upstream router and returns its replies. The router supplies the client address, gateway and DNS configuration.
+- **Auto-Recovery**: If the upstream Wi-Fi connection is lost, automatically disables the bridge and restores the local AP DHCP server so clients retain connectivity to the device.
 
 ### 3. Web UI & Captive Portal (`src/webui/`)
 - Lightweight HTTP server listening on TCP port 80.
 - DNS captive portal responding to all queries with `192.168.4.1` during unconfigured setup mode.
-- Single-page interface with responsive layout, scan network picker, status telemetry, and client deauth controls.
-- Input sanitization (HTML entity escaping) and request size limiting (2048 byte max header and body).
+- Single-page responsive interface with:
+  - Band filters (`All`, `2.4 GHz Only`, `5 GHz Only`) with channel badges (`Ch X (2.4 GHz / 5 GHz)`).
+  - Robust HTML5 data-attribute network selection (`data-ssid`, `data-ch`) immune to Unicode or quotation syntax breakage.
+  - Live Onboard RGB LED selector (`POST /set_led`).
+  - Real-time status telemetry and client kick controls.
 
-### 4. Double Reset Detector (DRD) (`src/main.ino`)
-- Uses RTC backup register `BKUP_REG3` (`BKUP_Read(3)` / `BKUP_Write(3)`), which persists across soft and physical resets.
-- On cold boot, writes magic token `0xD00B1E5E` to register 3.
-- If the chip resets again within 3.5 seconds, the magic value is read, triggering a factory reset back to Setup Portal mode.
-- After 3.5 seconds of clean operation, register 3 is cleared.
-
-### 5. Configuration Storage (`src/utils/ConfigStore.cpp`)
-- Persists SSID, WPA2 passphrase, extended AP name, channel, and mode to SPI flash via Ameba `FlashMemory`.
+### 4. Configuration Storage (`src/utils/ConfigStore.cpp`)
+- Persists SSID, WPA2 passphrase, extended AP name, radio channel, and LED mode to SPI flash via Ameba `FlashMemory`.
 - Verifies checksums and bounds-checks string fields with guaranteed null-terminators.
 
-### 6. LED Status Controller (`src/utils/LedStatus.h`)
-Drives onboard RGB LED with state-based blink patterns:
-- Red blink: Setup portal mode (`BW16-Repeater` active).
-- Blue blink: Connecting to upstream Wi-Fi network.
-- Green solid: L2 bridge active, passing traffic.
+### 5. LED Status Controller (`src/utils/LedStatus.h`)
+Drives the onboard RGB LED with state-based telemetry and user color options:
+- **Auto Mode (Default)**:
+  - Red blink: Setup portal mode (`BW16-Repeater` active).
+  - Blue blink: Connecting to upstream Wi-Fi network.
+  - Green solid: L2 bridge active, passing traffic.
+- **User Static Modes**: Off (Complete Dark / Sleep), Green, Blue, Red, Cyan, Magenta, Yellow, White.
+- Controllable via Web UI dropdown and UART serial CLI (`led <auto|off|green|blue|red|cyan|magenta|yellow|white>`).

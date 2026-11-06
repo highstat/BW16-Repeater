@@ -9,9 +9,24 @@ The Realtek RTL8720DN contains one physical 1-Transmitter 1-Receiver (1T1R) RF t
 ### Frequency and channel synchronization
 Because there is only one physical synthesizer and antenna switch:
 - The Access Point (AP) interface and Station (STA) interface **must** operate on the exact same radio channel and band.
-- If the station connects to an upstream 5 GHz router on Channel 36, the repeater AP automatically switches to 5 GHz Channel 36.
-- The repeater cannot simultaneously connect to a 5 GHz router while broadcasting a 2.4 GHz AP.
+- If the station connects to an upstream 5 GHz router on Channel 36, the repeater AP automatically operates on 5 GHz Channel 36.
+- The repeater cannot simultaneously connect to a 5 GHz router while broadcasting a 2.4 GHz AP, or vice versa.
 - When the upstream station disconnects or is unconfigured, the AP defaults to 2.4 GHz Channel 1.
+
+### 5 GHz Channel and Regulatory Limits
+
+The RTL8720DN radio supports both 2.4 GHz and 5 GHz, but SoftAP (repeater broadcast) is subject to channel band constraints:
+
+| 5 GHz Band | Channel Range | Station (Connect to Router) | SoftAP (Repeater Broadcast) | Notes |
+|:---|:---|:---:|:---:|:---|
+| **UNII-1 (Low Band)** | **36, 40, 44, 48** | **Supported** | **Supported** | **Recommended for 5 GHz repeating**. Stable, no radar restrictions. |
+| **UNII-2 / DFS (Radar)** | 52 to 144 | Supported (client only) | **Not Supported** | Requires certified DFS Master radar detection. SoftAP cannot broadcast. |
+| **UNII-3 (High Band)** | 149 to 165 | Supported (scans & connects) | **Restricted / Unstable** | SoftAP on channels > 48 in AmebaD is restricted by regional domain tables (`ioctl[RTKIOCSIWFREQ]`). |
+
+> [!TIP]
+> **Recommended Configurations:**
+> 1. **2.4 GHz Repeating (Channels 1–13):** Best wall penetration, full 20 dBm (100 mW) hardware TX power boost, and 100% compatibility with all phones, PCs, and IoT smart devices.
+> 2. **5 GHz Repeating (Channels 36–48):** If 5 GHz speed is required, set your home router's 5 GHz channel manually to **36, 40, 44, or 48**. Do not leave it on "Auto" if the router might pick DFS channels (52–144) or UNII-3 (149–165).
 
 ### Throughput halving
 Single-radio repeating uses time-division multiplexing:

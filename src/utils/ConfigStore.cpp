@@ -42,6 +42,7 @@ void ConfigStore::begin() {
   cfg.txPowerBoost = true;
   cfg.rssiKickEnabled = true;
   cfg.rssiKickThreshold = -76;
+  cfg.ledMode = 0; // 0: Auto status indicators
 }
 
 void ConfigStore::load() {
@@ -65,7 +66,7 @@ void ConfigStore::load() {
   }
 }
 
-void ConfigStore::save() {
+bool ConfigStore::save() {
   FlashMemory.read();
   if (FlashMemory.buf) {
     uint32_t magic = MAGIC;
@@ -74,5 +75,10 @@ void ConfigStore::save() {
     memcpy(FlashMemory.buf + 4, &size, 4);
     memcpy(FlashMemory.buf + 8, &cfg, sizeof(cfg));
     FlashMemory.update();
+    FlashMemory.read();
+    return memcmp(FlashMemory.buf, &magic, 4) == 0 &&
+           memcmp(FlashMemory.buf + 4, &size, 4) == 0 &&
+           memcmp(FlashMemory.buf + 8, &cfg, sizeof(cfg)) == 0;
   }
+  return false;
 }

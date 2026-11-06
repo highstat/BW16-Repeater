@@ -47,14 +47,18 @@ The onboard RGB LED indicates the current state:
 
 ## How it works
 
-The firmware enables concurrent station and access point mode on the RTL8720DN radio. Once associated with the upstream router, the AmebaD kernel activates the IEEE 802.1D bridge (`bridgeif`) across `wlan0` (station) and `wlan1` (access point), disables the internal DHCP server, and passes Ethernet frames transparently.
+The firmware enables concurrent station and access point mode on the RTL8720DN radio. Once associated with the upstream router, the AmebaD kernel activates the IEEE 802.1D bridge (`bridgeif`) across `wlan0` (station) and `wlan1` (access point) and disables the internal DHCP server. A DHCP relay forwards client requests to the upstream router and returns its replies to clients.
 
 Because the bridge operates at layer 2:
 - Clients get their IP, default gateway, and DNS servers straight from your main router.
 - Local network devices, printers, Home Assistant, and IP cameras remain visible across both networks.
 - UPnP, mDNS, and broadcast discovery work without configuration.
 
-Note on channel selection: The RTL8720DN uses a single radio transceiver. The repeater AP runs on the exact same radio channel and band as the upstream router you connect to.
+### Channel Selection & 5 GHz Bands
+The RTL8720DN uses a single radio transceiver:
+- The repeater AP operates on the **exact same radio channel and band** as the upstream router.
+- **2.4 GHz (Channels 1–13):** Recommended for general repeating (highest wall penetration and 100% device compatibility).
+- **5 GHz (Channels 36, 40, 44, 48):** Fully supported. If extending 5 GHz, configure your home router to use non-DFS channels **36–48**. Channels 52–144 (DFS / radar) and channels > 48 (UNII-3) have SoftAP hardware/driver limits.
 
 ## Documentation
 
@@ -75,11 +79,12 @@ Install Arduino CLI and the AmebaD core:
 arduino-cli config init
 arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/Ameba-AIoT/ameba-arduino-d/master/Arduino_package/package_realtek_amebad_index.json
 arduino-cli core update-index
-arduino-cli core install realtek:AmebaD
+arduino-cli core install realtek:AmebaD@3.1.9
 ```
 
-Enable repeater support in `platform_opts.h`:
-Set `#define CONFIG_EXAMPLE_WLAN_REPEATER 1` in:
+The build requires AmebaD Core 3.1.9. `scripts/build.sh` enables `CONFIG_EXAMPLE_WLAN_REPEATER`, rebuilds the bridge-related LwIP objects with a consistent ABI, and verifies the three-interface `xnetif` symbol. Editing the header alone does not rebuild the precompiled core library.
+
+The option is located in:
 `~/.arduino15/packages/realtek/hardware/AmebaD/3.1.9/system/project/realtek_amebaD_va0_example/inc/inc_hp/platform_opts.h`
 
 ### Build
@@ -88,12 +93,6 @@ Run the build script:
 
 ```bash
 bash scripts/build.sh
-```
-
-Or compile directly:
-
-```bash
-arduino-cli compile --fqbn realtek:AmebaD:Ai-Thinker_BW16 ./
 ```
 
 Compiled binaries are placed in `build/` and `bin/`.

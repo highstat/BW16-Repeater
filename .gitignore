@@ -74,3 +74,9 @@ scratch_flash.py
 *.session
 *.session-journal
 clean_telegram.py
+
+# Local build and Python diagnostic artifacts
+build/
+__pycache__/
+graphify-out/
+docs/diagnosis-2026-11-02.md

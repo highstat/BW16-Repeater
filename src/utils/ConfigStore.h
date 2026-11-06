@@ -42,13 +42,14 @@ struct RepeaterConfig {
   bool txPowerBoost;         // Max hardware TX power (20 dBm)
   bool rssiKickEnabled;      // Smart RSSI Steering (anti-sticky client)
   int8_t rssiKickThreshold;  // Threshold in dBm (default -76)
+  uint8_t ledMode;           // 0: Auto, 1: Off, 2: Green, 3: Blue, 4: Red, 5: Cyan, 6: Magenta, 7: Yellow, 8: White
 };
 
 class ConfigStore {
  public:
   void begin();
   void load();
-  void save();
+  bool save();
   const RepeaterConfig& get() const { return cfg; }
   RepeaterConfig& mutableRef() { return cfg; }
   RepeaterMode mode() const { return cfg.mode; }

@@ -33,7 +33,5 @@ jobs:
         with:
           name: firmware-bin
           path: |
-            /tmp/arduino/sketches/*/BW16-Repeater.ino.bin
-            /tmp/arduino/sketches/*/application.axf
             build/*
           if-no-files-found: ignore

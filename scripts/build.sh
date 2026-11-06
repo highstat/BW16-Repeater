@@ -33,7 +33,7 @@ fi
 echo "Configured CONFIG_EXAMPLE_WLAN_REPEATER=1 in $PLATFORM_OPTS"
 
 echo "Compiling BW16-Repeater for $FQBN..."
-WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}bw16-build.XXXXXX")
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/bw16-build.XXXXXX")
 BUILD_DIR="$WORK_DIR/arduino"
 BRIDGE_LIB="$WORK_DIR/lib_bridge_core.a"
 COMPILE_LOG="$WORK_DIR/compile.log"
